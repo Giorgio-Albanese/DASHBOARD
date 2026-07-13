@@ -122,37 +122,41 @@ if not st.session_state["sbloccato"]:
 # STATO 2: APPLICAZIONE SBLOCCATA (DASHBOARD ATTIVA)
 # -------------------------------------------------------------------------
 else:
-    # Pulsante per cancellare completamente la RAM e chiudere la sessione di lavoro
     if st.sidebar.button("🔒 Chiudi Sessione (Cancella RAM)"):
         if st.session_state["db_conn"]:
-            try:
-                st.session_state["db_conn"].close()
-            except:
-                pass
+            try: st.session_state["db_conn"].close()
+            except: pass
         st.session_state["sbloccato"] = False
         st.session_state["buffer_dati"] = None
         st.session_state["db_conn"] = None
         st.rerun()
         
-    st.title("📊 Dashboard Direzione Vita: Premi, Sinistri ed Estinzioni")
+    st.title("📊 Dashboard Direzione Vita")
     st.sidebar.header("Configuratore Dashboard")
     
-    # Recuperiamo la connessione DuckDB persistente dallo stato di Streamlit
     conn = ottieni_connessione()
     
     if conn is not None:
-        try:
-            # Query di test ultra-veloce eseguita direttamente sulla tabella in memoria
-            df_struttura = conn.execute("SELECT * FROM vista_polizze LIMIT 5").df()
+        # CREAZIONE DEI TAB PER NAVIGARE TRA I VARI PANNELLI
+        tab_navigatore, tab_premi, tab_sinistri = st.tabs([
+            "🔍 Navigatore DB", 
+            "💰 Analisi Premi", 
+            "🚨 Analisi Sinistri"
+        ])
+        
+        with tab_navigatore:
+            # Importiamo e renderizziamo il componente dinamico appena creato
+            from src.components.explorer import render_db_navigator
+            render_db_navigator(conn)
             
-            st.write("### Anteprima dei dati sbloccati in memoria (Query interna in RAM):")
-            st.dataframe(df_struttura)
+        with tab_premi:
+            st.subheader("Sezione Premi (In sviluppo)")
+            # Qui andrà il modulo dei premi
             
-            st.sidebar.subheader("Filtri Globali")
-            # [I prossimi componenti dei filtri interagiranno direttamente con l'oggetto 'conn']
+        with tab_sinistri:
+            st.subheader("Sezione Sinistri (In sviluppo)")
+            # Qui andrà il modulo dei sinistri
             
-        except Exception as e:
-            st.error(f"Errore di lettura dal database persistente: {e}")
     else:
         st.error("⚠️ Connessione al database persa. Effettua nuovamente l'accesso.")
         st.session_state["sbloccato"] = False
