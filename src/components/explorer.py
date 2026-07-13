@@ -97,7 +97,6 @@ def render_db_navigator(conn):
 
     stringa_where_completa = " WHERE " + " AND ".join(clausole_where) if clausole_where else ""
 
-    # Calcolo preliminare velocissimo del totale righe filtrate
     try:
         totale_righe = conn.execute(f"SELECT COUNT(*) FROM vista_polizze{stringa_where_completa}").fetchone()[0]
     except Exception as e:
@@ -105,7 +104,7 @@ def render_db_navigator(conn):
         return
 
     # =========================================================================
-    # PANNELLO 2: REPORT TABELLARE DI SINTESI (MINI-PIVOT MULTI-METRICA)
+    # PANNELLO 2: REPORT TABELLARE DI SINTESI (FISSATO CON LE DOPPIE VIRGOLETTE)
     # =========================================================================
     with st.expander("📈 2. Report Tabellare di Sintesi (Mini-Pivot)", expanded=True):
         if totale_righe == 0:
@@ -115,7 +114,6 @@ def render_db_navigator(conn):
         else:
             st.markdown(f"**KPI di Base:** Polizze Totali in Vista: `{totale_righe:,}`")
             
-            # Scelta di quali colonne numeriche includere nel report
             colonne_stats_scelte = st.multiselect(
                 "Seleziona i campi numerici da analizzare contemporaneamente:",
                 options=colonne_numeriche,
@@ -123,12 +121,12 @@ def render_db_navigator(conn):
             )
             
             if colonne_stats_scelte:
-                # Costruiamo una query combinata via UNION ALL per estrarre tutto in un unico colpo d'occhio
                 pezzi_query = []
                 for col in colonne_stats_scelte:
+                    # Sostituito [Variabile Finanziaria] con "Variabile Finanziaria"
                     pezzi_query.append(f"""
                         SELECT 
-                            '{col}' AS [Variabile Finanziaria], 
+                            '{col}' AS "Variabile Finanziaria", 
                             SUM({col}) AS SOMMA, 
                             AVG({col}) AS MEDIA, 
                             MAX({col}) AS MASSIMO, 
@@ -141,14 +139,12 @@ def render_db_navigator(conn):
                 try:
                     df_stats = conn.execute(query_pivot_completa).df()
                     
-                    # Formattazione professionale dei numeri per la visualizzazione aziendale
                     df_stats_formatted = df_stats.copy()
                     for metric_col in ['SOMMA', 'MEDIA', 'MASSIMO', 'MINIMO']:
                         df_stats_formatted[metric_col] = df_stats_formatted[metric_col].apply(
                             lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-"
                         )
                     
-                    # Mostra la tabella pivot di sintesi
                     st.dataframe(df_stats_formatted, use_container_width=True, hide_index=True)
                     
                 except Exception as e:
@@ -194,13 +190,11 @@ def render_db_navigator(conn):
                     use_container_width=True
                 )
 
-            # Query limitata per la preview tabellare reattiva
             query_anteprima = f"SELECT {colonne_sql} FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
             df_preview = conn.execute(query_anteprima).df()
             
             st.dataframe(df_preview, use_container_width=True)
             
-            # Tasto "Mostra Altro"
             if st.session_state["step_righe"] < totale_righe:
                 if st.button("🔽 Mostra altre 10 righe", use_container_width=True):
                     st.session_state["step_righe"] += 10
