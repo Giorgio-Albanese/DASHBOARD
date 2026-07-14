@@ -95,9 +95,9 @@ def decifra_parquet_in_memoria(file_path: str, password: str):
     decryptor = cipher.decryptor()
     dati_decifrati = decryptor.update(payload_cifrato) + decryptor.finalize()
     
+    # --- RIGHE CORRETTE ---
     unpadder = padding.PKCS7(128).unpadder()
-    unpadder.update(dati_decifrati)
-    dati_puliti = unpadder.finalize()
+    dati_puliti = unpadder.update(dati_decifrati) + unpadder.finalize()
     
     return io.BytesIO(dati_puliti)
 
