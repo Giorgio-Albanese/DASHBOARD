@@ -29,14 +29,9 @@ st.set_page_config(
     page_icon=":material/analytics:"
 )
 
-# --- CSS PERSONALIZZATO ISTITUZIONALE (PULITO E SENZA BLOCCHI DI COLORE) ---
+# --- CSS PERSONALIZZATO ISTITUZIONALE - FIX COMPLETO E DEFINITIVO TAB ---
 st.markdown("""
     <style>
-    /* 1. Forza il Verde HDI come colore primario nativo dell'applicazione (gestisce tab e focus automaticamente) */
-    :root, [data-testid="stAppViewContainer"] {
-        --primary-color: #007A33 !important;
-    }
-
     /* Sfondo generale */
     .main { background-color: #F8F9FA; }
     
@@ -50,25 +45,6 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
-    /* 2. RESET COMPLETO DEI TAB (Rimuove i blocchi di sfondo verde errati dello script precedente) */
-    button[data-testid="stTab"] {
-        background-color: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-    }
-    
-    /* Testo dei tab NON selezionati (Grigio scuro, perfettamente leggibile) */
-    button[data-testid="stTab"] p {
-        color: #4A4A4A !important;
-        font-weight: 500 !important;
-    }
-    
-    /* Testo del tab SELEZIONATO (Verde HDI) */
-    button[data-testid="stTab"][aria-selected="true"] p {
-        color: #007A33 !important;
-        font-weight: 700 !important;
-    }
-    
     /* Uniformazione bottoni primari verdi */
     .stButton>button { border-radius: 5px; height: 3em; transition: all 0.3s; }
     div.stButton > button:first-child { background-color: #007A33 !important; color: white !important; border: none !important; }
@@ -77,6 +53,47 @@ st.markdown("""
     /* Layout Logo Sidebar */
     [data-testid="stSidebar"] img { border-radius: 0px !important; }
     [data-testid="stSidebar"] [data-testid="stImage"] { padding: 10px 0px !important; }
+    
+    /* =========================================================================
+       SOLUZIONE DEFINITIVA PER I TAB (Elimina totalmente il rosso/arancione)
+       ========================================================================= */
+    
+    /* 1. Stato base per tutti i tab (Non Selezionati): testo grigio scuro */
+    button[data-baseweb="tab"], button[data-testid="stTab"] {
+        background-color: transparent !important;
+        color: #4A4A4A !important;
+        border-bottom: 2px solid transparent !important;
+    }
+    
+    /* 2. Forza TUTTI i sotto-elementi (testo, icone, markdown) a ereditare il colore del tab padre */
+    button[data-baseweb="tab"] *, button[data-testid="stTab"] * {
+        color: inherit !important;
+    }
+    
+    /* 3. Stato per il tab SELEZIONATO: Testo Verde HDI + Linea inferiore Verde fissa */
+    button[data-baseweb="tab"][aria-selected="true"], 
+    button[data-testid="stTab"][aria-selected="true"] {
+        color: #007A33 !important;
+        font-weight: bold !important;
+        border-bottom: 2px solid #007A33 !important;
+    }
+    
+    /* 4. DISATTIVA LA LINEA MOBILE DI STREAMLIT (Nasconde l'elemento nativo che restava rosso) */
+    div[data-testid="stTabList"] div[style*="background-color"],
+    div[role="tablist"] div[style*="background-color"] {
+        display: none !important;
+        background-color: transparent !important;
+        height: 0px !important;
+    }
+    
+    /* =========================================================================
+       FIX FOCUS SUI CAMPI DI TESTO E FILTRI
+       ========================================================================= */
+    .stTextInput div[data-baseweb="input"]:focus-within,
+    .stSelectbox div[data-baseweb="select"]:focus-within {
+        border-color: #007A33 !important;
+        box-shadow: 0 0 0 1px #007A33 !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -120,7 +137,8 @@ def decifra_parquet_in_memoria(file_path: str, password: str):
     dati_decifrati = decryptor.update(payload_cifrato) + decryptor.finalize()
     
     unpadder = padding.PKCS7(128).unpadder()
-    dati_puliti = unpadder.update(dati_decifrati) + unpadder.finalize()
+    unpadder.update(dati_decifrati)
+    dati_puliti = unpadder.finalize()
     
     return io.BytesIO(dati_puliti)
 
