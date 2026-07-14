@@ -3,24 +3,42 @@ import pandas as pd
 import datetime
 
 def carica_metadati_db(conn):
-    """Recupera le colonne e i tipi di dati per mappare i filtri corretti"""
+    """Recupera le colonne e mappa i filtri corretti, forzando la gestione data se il nome lo suggerisce"""
     info = conn.execute("PRAGMA table_info(vista_polizze)").df()
     mappa_tipi = {}
     for _, row in info.iterrows():
+        col_name = str(row['name'])
         tipo_sql = str(row['type']).upper()
+        
+        # Rilevamento campi numerici
         if any(x in tipo_sql for x in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC", "REAL"]):
-            mappa_tipi[row['name']] = "NUMERIC"
-        elif any(x in tipo_sql for x in ["DATE", "TIME", "TIMESTAMP"]):
-            mappa_tipi[row['name']] = "DATE"
+            mappa_tipi[col_name] = "NUMERIC"
+        # Rilevamento campi data (o colonne di testo che contengono parole chiave temporali)
+        elif any(x in tipo_sql for x in ["DATE", "TIME", "TIMESTAMP"]) or any(x in col_name.upper() for x in ["DATA", "DECORRENZA", "SCADENZA", "PERIODO"]):
+            mappa_tipi[col_name] = "DATE"
+        # Fallback su testo
         else:
-            mappa_tipi[row['name']] = "TEXT"
+            mappa_tipi[col_name] = "TEXT"
     return mappa_tipi
+
+def costruisci_campo_data_safe(colonna):
+    """
+    Genera un'espressione SQL DuckDB a cascata (bulletproof) capace di digerire 
+    qualsiasi formato di data (DD/MM/YYYY, ISO, DD-MM-YYYY) convertendolo in DATE reale.
+    """
+    return f"""CAST(COALESCE(
+        TRY_STRPTIME(CAST({colonna} AS VARCHAR), '%d/%m/%Y'),
+        TRY_STRPTIME(CAST({colonna} AS VARCHAR), '%Y-%m-%d'),
+        TRY_STRPTIME(CAST({colonna} AS VARCHAR), '%d-%m-%Y'),
+        TRY_CAST({colonna} AS DATE)
+    ) AS DATE)"""
 
 @st.cache_data(ttl=300)
 def ottieni_anni_univoci(colonna, _conn):
-    """Estrae gli anni univoci da una colonna data per popolare il dropdown"""
+    """Estrae in modo sicuro gli anni dalle date usando il parser multi-formato"""
     try:
-        query = f"SELECT DISTINCT YEAR({colonna}) AS anno FROM vista_polizze WHERE {colonna} IS NOT NULL ORDER BY anno DESC"
+        campo_data_safe = costruisci_campo_data_safe(colonna)
+        query = f"SELECT DISTINCT YEAR({campo_data_safe}) AS anno FROM vista_polizze WHERE {colonna} IS NOT NULL ORDER BY anno DESC"
         df_anni = _conn.execute(query).df()
         return sorted(df_anni['anno'].dropna().astype(int).tolist(), reverse=True)
     except Exception:
@@ -40,10 +58,10 @@ def render_db_navigator(conn):
     colonne_numeriche = [col for col, tipo in metadati.items() if tipo == "NUMERIC"]
     
     # =========================================================================
-    # 1. CONFIGURAZIONE FILTRI (MINIMIZZABILE)
+    # 1. CONFIGURAZIONE FILTRI (REATTIVI)
     # =========================================================================
     with st.expander("🛠️ 1. Configura Filtri di Riga Condizionali", expanded=True):
-        st.caption("Filtri multipli in AND. Gestione intelligente per i campi DATA con estrazione automatica dell'anno.")
+        st.caption("Filtri multipli in AND. Parser multi-formato integrato (rileva DD/MM/YYYY, ISO, ecc.)")
         
         if st.button("➕ Aggiungi un nuovo filtro"):
             st.session_state["lista_filtri"].append({
@@ -155,20 +173,22 @@ def render_db_navigator(conn):
                     elif op == "Fino al (<=)": clausole_where.append(f"{col} <= {val_safe}")
                 
                 elif tipo_dato == "DATE":
+                    campo_sql_safe = costruisci_campo_data_safe(col)
+                    
                     if filtro.get("tipo_data") == "Solo Anno":
-                        campo_sql = f"YEAR({col})"
-                        if op == "Uguale a": clausole_where.append(f"{campo_sql} = {val_safe}")
-                        elif op == "Diverso da": clausole_where.append(f"{campo_sql} <> {val_safe}")
-                        elif op == "Dopo il (>)": clausole_where.append(f"{campo_sql} > {val_safe}")
-                        elif op == "Prima del (<)": clausole_where.append(f"{campo_sql} < {val_safe}")
-                        elif op == "Dal (>=)": clausole_where.append(f"{campo_sql} >= {val_safe}")
-                        elif op == "Fino al (<=)": clausole_where.append(f"{campo_sql} <= {val_safe}")
+                        campo_anno = f"YEAR({campo_sql_safe})"
+                        if op == "Uguale a": clausole_where.append(f"{campo_anno} = {val_safe}")
+                        elif op == "Diverso da": clausole_where.append(f"{campo_anno} <> {val_safe}")
+                        elif op == "Dopo il (>)": clausole_where.append(f"{campo_anno} > {val_safe}")
+                        elif op == "Prima del (<)": clausole_where.append(f"{campo_anno} < {val_safe}")
+                        elif op == "Dal (>=)": clausole_where.append(f"{campo_anno} >= {val_safe}")
+                        elif op == "Fino al (<=)": clausole_where.append(f"{campo_anno} <= {val_safe}")
                     else:
-                        if op == "Uguale a": clausole_where.append(f"{col} = '{val_safe}'")
-                        elif op == "Dopo la data (>)": clausole_where.append(f"{col} > '{val_safe}'")
-                        elif op == "Prima della data (<)": clausole_where.append(f"{col} < '{val_safe}'")
-                        elif op == "Dalla data (>=)": clausole_where.append(f"{col} >= '{val_safe}'")
-                        elif op == "Fino alla data (<=)": clausole_where.append(f"{col} <= '{val_safe}'")
+                        if op == "Uguale a": clausole_where.append(f"{campo_sql_safe} = CAST('{val_safe}' AS DATE)")
+                        elif op == "Dopo la data (>)": clausole_where.append(f"{campo_sql_safe} > CAST('{val_safe}' AS DATE)")
+                        elif op == "Prima della data (<)": clausole_where.append(f"{campo_sql_safe} < CAST('{val_safe}' AS DATE)")
+                        elif op == "Dalla data (>=)": clausole_where.append(f"{campo_sql_safe} >= CAST('{val_safe}' AS DATE)")
+                        elif op == "Fino alla data (<=)": clausole_where.append(f"{campo_sql_safe} <= CAST('{val_safe}' AS DATE)")
 
         if indici_da_rimuovere:
             for idx in sorted(indici_da_rimuovere, reverse=True):
@@ -184,57 +204,12 @@ def render_db_navigator(conn):
         return
 
     # =========================================================================
-    # 2. REPORT TABELLARE DI SINTESI (MINI-PIVOT)
+    # 2. PREVIEW DATI, BADGES & HIGHLIGHT (SECONDO POSTO)
     # =========================================================================
-    with st.expander("📈 2. Report Tabellare di Sintesi (Mini-Pivot)", expanded=True):
-        if totale_righe == 0:
-            st.warning("Nessun dato disponibile con i filtri correnti per generare le statistiche.")
-        elif not colonne_numeriche:
-            st.info("Nessuna colonna numerica rilevata nel database per il calcolo delle metriche.")
-        else:
-            st.markdown(f"**KPI di Base:** Polizze Totali in Vista: `{totale_righe:,}`")
-            
-            colonne_stats_scelte = st.multiselect(
-                "Seleziona i campi numerici da analizzare contemporaneamente:",
-                options=colonne_numeriche,
-                default=colonne_numeriche[:3] if len(colonne_numeriche) > 3 else colonne_numeriche
-            )
-            
-            if colonne_stats_scelte:
-                pezzi_query = []
-                for col in colonne_stats_scelte:
-                    pezzi_query.append(f"""
-                        SELECT 
-                            '{col}' AS "Variabile Finanziaria", 
-                            SUM({col}) AS SOMMA, 
-                            AVG({col}) AS MEDIA, 
-                            MAX({col}) AS MASSIMO, 
-                            MIN({col}) AS MINIMO 
-                        FROM vista_polizze{stringa_where_completa}
-                    """)
-                
-                query_pivot_completa = " UNION ALL ".join(pezzi_query)
-                
-                try:
-                    df_stats = conn.execute(query_pivot_completa).df()
-                    df_stats_formatted = df_stats.copy()
-                    for metric_col in ['SOMMA', 'MEDIA', 'MASSIMO', 'MINIMO']:
-                        df_stats_formatted[metric_col] = df_stats_formatted[metric_col].apply(
-                            lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-"
-                        )
-                    st.dataframe(df_stats_formatted, use_container_width=True, hide_index=True)
-                except Exception as e:
-                    st.error(f"Errore durante il calcolo del report di sintesi: {e}")
-            else:
-                st.caption("Seleziona almeno una colonna numerica per visualizzare la tabella dei KPI.")
-
-    # =========================================================================
-    # 3. PREVIEW DATI, BADGES & HIGHLIGHT (MINIMIZZABILE)
-    # =========================================================================
-    with st.expander("👀 3. Preview dei Dati (Snippet) e Download Estrazione completa", expanded=True):
+    with st.expander("👀 2. Preview dei Dati (Snippet) e Download Estrazione completa", expanded=True):
         if totale_righe > 0:
             
-            # --- GENERAZIONE DEI BADGES DEI FILTRI ATTIVI ---
+            # --- GENERAZIONE BADGES ---
             lista_badges = []
             colonne_attive_filtrate = []
             
@@ -276,7 +251,6 @@ def render_db_navigator(conn):
             else:
                 st.caption("Nessun filtro attivo (Visualizzazione totale portafoglio)")
 
-            # Layout controlli inferiori (Info righe + Tasto download per l'estrazione COMPLETA)
             col_info_view, col_dl = st.columns([3, 1])
             with col_info_view:
                 righe_mostrate = min(st.session_state["step_righe"], totale_righe)
@@ -288,7 +262,6 @@ def render_db_navigator(conn):
                     df_download = conn.execute(query).df()
                     return df_download.to_csv(index=False).encode('utf-8')
                     
-                # Rimosso il selettore colonne: ora facciamo direttamente SELECT *
                 query_completa = f"SELECT * FROM vista_polizze{stringa_where_completa}"
                 csv_data = genera_csv(query_completa)
                 
@@ -298,14 +271,12 @@ def render_db_navigator(conn):
                     file_name="estrazione_filtrata_completa.csv",
                     mime="text/csv",
                     use_container_width=True,
-                    help="Scarica tutte le righe che soddisfano i filtri correnti (non solo l'anteprima)."
+                    help="Scarica tutte le righe che soddisfano i filtri correnti."
                 )
 
-            # Query limitata per la preview tabellare
             query_anteprima = f"SELECT * FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
             df_preview = conn.execute(query_anteprima).df()
             
-            # --- EVIDENZIAZIONE COLONNE FILTRATE ---
             def applica_evidenziatore(colonna_dati):
                 if colonna_dati.name in colonne_attive_filtrate:
                     return ['background-color: rgba(56, 189, 248, 0.12)'] * len(colonna_dati)
@@ -324,3 +295,48 @@ def render_db_navigator(conn):
                     st.rerun()
         else:
             st.warning("Nessun record da mostrare. Modifica o resetta i filtri di riga al punto 1.")
+
+    # =========================================================================
+    # 3. REPORT TABELLARE DI SINTESI (CODA & REATTIVO AI FILTRI)
+    # =========================================================================
+    with st.expander("📈 3. Report Tabellare di Sintesi (Mini-Pivot sui dati filtrati)", expanded=True):
+        if totale_righe == 0:
+            st.warning("Nessun dato disponibile con i filtri correnti per generare le statistiche.")
+        elif not colonne_numeriche:
+            st.info("Nessuna colonna numerica rilevata nel database per il calcolo delle metriche.")
+        else:
+            st.markdown(f"**KPI calcolati sulla selezione corrente:** Polizze Totali Filtrate: `{totale_righe:,}`")
+            
+            colonne_stats_scelte = st.multiselect(
+                "Seleziona i campi numerici da analizzare sulla vista attuale:",
+                options=colonne_numeriche,
+                default=colonne_numeriche[:3] if len(colonne_numeriche) > 3 else colonne_numeriche
+            )
+            
+            if colonne_stats_scelte:
+                pezzi_query = []
+                for col in colonne_stats_scelte:
+                    pezzi_query.append(f"""
+                        SELECT 
+                            '{col}' AS "Variabile Finanziaria", 
+                            SUM({col}) AS SOMMA, 
+                            AVG({col}) AS MEDIA, 
+                            MAX({col}) AS MASSIMO, 
+                            MIN({col}) AS MINIMO 
+                        FROM vista_polizze{stringa_where_completa}
+                    """)
+                
+                query_pivot_completa = " UNION ALL ".join(pezzi_query)
+                
+                try:
+                    df_stats = conn.execute(query_pivot_completa).df()
+                    df_stats_formatted = df_stats.copy()
+                    for metric_col in ['SOMMA', 'MEDIA', 'MASSIMO', 'MINIMO']:
+                        df_stats_formatted[metric_col] = df_stats_formatted[metric_col].apply(
+                            lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-"
+                        )
+                    st.dataframe(df_stats_formatted, use_container_width=True, hide_index=True)
+                except Exception as e:
+                    st.error(f"Errore durante il calcolo del report di sintesi: {e}")
+            else:
+                st.caption("Seleziona almeno una colonna numerica per visualizzare la tabella dei KPI finanziari.")
