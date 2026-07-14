@@ -293,7 +293,7 @@ def render_db_navigator(conn):
     # =========================================================================
     # 3. REPORT TABELLARE DI SINTESI
     # =========================================================================
-    st.markdown('<div class="hdi-card"><h3>📈 3. Report Tabellare di Sintesi</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hdi-card"><h3>📈 Statistiche di sintesi</h3></div>', unsafe_allow_html=True)
     if totale_righe == 0:
         st.warning("Nessun dato disponibile con i filtri correnti.")
     elif not colonne_numeriche:
