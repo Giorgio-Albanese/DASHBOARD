@@ -29,10 +29,13 @@ st.set_page_config(
     page_icon=":material/analytics:"
 )
 
-# --- CSS PERSONALIZZATO ISTITUZIONALE (TEMA VERDE #007A33) ---
+# --- CSS PERSONALIZZATO ISTITUZIONALE CON FIX PER I TAB ---
 st.markdown("""
     <style>
+    /* Sfondo generale */
     .main { background-color: #F8F9FA; }
+    
+    /* Card personalizzate */
     .hdi-card {
         background-color: white;
         padding: 22px;
@@ -41,15 +44,53 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
         margin-bottom: 20px;
     }
+    
+    /* Uniformazione bottoni primari verdi */
     .stButton>button { border-radius: 5px; height: 3em; transition: all 0.3s; }
     div.stButton > button:first-child { background-color: #007A33; color: white; border: none; }
     div.stButton > button:first-child:hover { background-color: #005F26; color: white; }
+    
+    /* Layout Logo Sidebar */
     [data-testid="stSidebar"] img { border-radius: 0px !important; }
     [data-testid="stSidebar"] [data-testid="stImage"] { padding: 10px 0px !important; }
+    
+    /* =========================================================================
+       FIX OVERRIDE COLORE ROSSO SUI TAB (st.tabs)
+       ========================================================================= */
+    /* Testo del tab NON selezionato */
+    button[data-baseweb="tab"] p {
+        color: #666666 !important;
+        transition: color 0.3s ease;
+    }
+    
+    /* Testo del tab SELEZIONATO (Verde) */
+    button[data-baseweb="tab"][aria-selected="true"] p {
+        color: #007A33 !important;
+        font-weight: 600 !important;
+    }
+    
+    /* Linea inferiore statica dei tab */
+    button[data-baseweb="tab"] {
+        border-bottom-color: transparent !important;
+    }
+    
+    /* Forza il colore verde sulla linea mobile/attiva sotto il tab selezionato */
+    div[role="tablist"] div[style*="background-color"] {
+        background-color: #007A33 !important;
+    }
+    
+    /* =========================================================================
+       FIX FOCUS SUI CAMPI DI TESTO (Evita bordi rossi al click)
+       ========================================================================= */
+    .stTextInput div[data-baseweb="input"]:focus-within,
+    .stSelectbox div[data-baseweb="select"]:focus-within {
+        border-color: #007A33 !important;
+        box-shadow: 0 0 0 1px #007A33 !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
-# --- SIDEBAR GLOBALE (Sempre visibile per ospitare il Logo aziendale) ---
+# --- SIDEBAR GLOBALE ---
 with st.sidebar:
     path_logo = get_resource_path("logo_hdi.png")
     if os.path.exists(path_logo):
@@ -147,7 +188,6 @@ if not st.session_state["sbloccato"]:
 # STATO 2: APPLICAZIONE SBLOCCATA (DASHBOARD ATTIVA)
 # -------------------------------------------------------------------------
 else:
-    # Aggiungi controlli di sessione all'interno della sidebar sotto il logo
     with st.sidebar:
         st.sidebar.markdown("**Sessione Attiva**")
         if st.sidebar.button("🔒 Chiudi Sessione (Cancella RAM)", use_container_width=True):
