@@ -52,7 +52,7 @@ def render_db_navigator(conn):
     # =========================================================================
     # 1. CONFIGURAZIONE FILTRI (Eredita lo stile .hdi-card)
     # =========================================================================
-    st.markdown('<div class="hdi-card"><h3>🔍 1. Configura Filtri di Riga Condizionali</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hdi-card"><h3>🎛️ Filtri</h3></div>', unsafe_allow_html=True)
     
     if st.button("➕ Aggiungi un nuovo filtro"):
         st.session_state["lista_filtri"].append({
@@ -197,7 +197,7 @@ def render_db_navigator(conn):
     # =========================================================================
     # 2. PREVIEW DATI
     # =========================================================================
-    st.markdown('<div class="hdi-card"><h3>👀 2. Preview dei Dati (Snippet) e Download</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hdi-card"><h3>👀 Preview e Download</h3></div>', unsafe_allow_html=True)
     if totale_righe > 0:
         
         # --- GENERAZIONE BADGES CON BORDI VERDE HDI ---
