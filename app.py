@@ -29,9 +29,14 @@ st.set_page_config(
     page_icon=":material/analytics:"
 )
 
-# --- CSS PERSONALIZZATO ISTITUZIONALE CON FIX PER I TAB ---
+# --- CSS PERSONALIZZATO ISTITUZIONALE (PULITO E SENZA BLOCCHI DI COLORE) ---
 st.markdown("""
     <style>
+    /* 1. Forza il Verde HDI come colore primario nativo dell'applicazione (gestisce tab e focus automaticamente) */
+    :root, [data-testid="stAppViewContainer"] {
+        --primary-color: #007A33 !important;
+    }
+
     /* Sfondo generale */
     .main { background-color: #F8F9FA; }
     
@@ -45,48 +50,33 @@ st.markdown("""
         margin-bottom: 20px;
     }
     
+    /* 2. RESET COMPLETO DEI TAB (Rimuove i blocchi di sfondo verde errati dello script precedente) */
+    button[data-testid="stTab"] {
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    
+    /* Testo dei tab NON selezionati (Grigio scuro, perfettamente leggibile) */
+    button[data-testid="stTab"] p {
+        color: #4A4A4A !important;
+        font-weight: 500 !important;
+    }
+    
+    /* Testo del tab SELEZIONATO (Verde HDI) */
+    button[data-testid="stTab"][aria-selected="true"] p {
+        color: #007A33 !important;
+        font-weight: 700 !important;
+    }
+    
     /* Uniformazione bottoni primari verdi */
     .stButton>button { border-radius: 5px; height: 3em; transition: all 0.3s; }
-    div.stButton > button:first-child { background-color: #007A33; color: white; border: none; }
-    div.stButton > button:first-child:hover { background-color: #005F26; color: white; }
+    div.stButton > button:first-child { background-color: #007A33 !important; color: white !important; border: none !important; }
+    div.stButton > button:first-child:hover { background-color: #005F26 !important; color: white !important; }
     
     /* Layout Logo Sidebar */
     [data-testid="stSidebar"] img { border-radius: 0px !important; }
     [data-testid="stSidebar"] [data-testid="stImage"] { padding: 10px 0px !important; }
-    
-    /* =========================================================================
-       FIX OVERRIDE COLORE ROSSO SUI TAB (st.tabs)
-       ========================================================================= */
-    /* Testo del tab NON selezionato */
-    button[data-baseweb="tab"] p {
-        color: #666666 !important;
-        transition: color 0.3s ease;
-    }
-    
-    /* Testo del tab SELEZIONATO (Verde) */
-    button[data-baseweb="tab"][aria-selected="true"] p {
-        color: #007A33 !important;
-        font-weight: 600 !important;
-    }
-    
-    /* Linea inferiore statica dei tab */
-    button[data-baseweb="tab"] {
-        border-bottom-color: transparent !important;
-    }
-    
-    /* Forza il colore verde sulla linea mobile/attiva sotto il tab selezionato */
-    div[role="tablist"] div[style*="background-color"] {
-        background-color: #007A33 !important;
-    }
-    
-    /* =========================================================================
-       FIX FOCUS SUI CAMPI DI TESTO (Evita bordi rossi al click)
-       ========================================================================= */
-    .stTextInput div[data-baseweb="input"]:focus-within,
-    .stSelectbox div[data-baseweb="select"]:focus-within {
-        border-color: #007A33 !important;
-        box-shadow: 0 0 0 1px #007A33 !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
