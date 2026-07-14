@@ -166,7 +166,7 @@ else:
             st.session_state["db_conn"] = None
             st.rerun()
             
-    st.title("📊 Dashboard Direzione Vita")
+    st.title("📊 Dashboard Credit Protection")
     
     conn = ottieni_connessione()
     
