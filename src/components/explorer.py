@@ -204,7 +204,7 @@ def render_db_navigator(conn):
         return
 
     # =========================================================================
-    # 2. PREVIEW DATI, BADGES & HIGHLIGHT (SECONDO POSTO)
+    # 2. PREVIEW DATI, BADGES & HIGHLIGHT (CON FORMATTAZIONE AD 1 DECIMALE)
     # =========================================================================
     with st.expander("👀 2. Preview dei Dati (Snippet) e Download Estrazione completa", expanded=True):
         if totale_righe > 0:
@@ -277,15 +277,22 @@ def render_db_navigator(conn):
             query_anteprima = f"SELECT * FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
             df_preview = conn.execute(query_anteprima).df()
             
+            # --- APPLICAZIONE FORMATTAZIONE DECIMALE E HIGHLIGHT DI COLONNA ---
+            colonne_float = df_preview.select_dtypes(include=['float64', 'float32']).columns.tolist()
+            df_visualizzazione = df_preview.style
+            
+            if colonne_float:
+                # Formattazione a 1 decimale con separatore italiano (punto per migliaia, virgola per decimali)
+                fmt_dict = {col: lambda x: f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-" for col in colonne_float}
+                df_visualizzazione = df_visualizzazione.format(fmt_dict)
+            
             def applica_evidenziatore(colonna_dati):
                 if colonna_dati.name in colonne_attive_filtrate:
                     return ['background-color: rgba(56, 189, 248, 0.12)'] * len(colonna_dati)
                 return [''] * len(colonna_dati)
 
             if len(colonne_attive_filtrate) > 0 and not df_preview.empty:
-                df_visualizzazione = df_preview.style.apply(applica_evidenziatore, axis=0)
-            else:
-                df_visualizzazione = df_preview
+                df_visualizzazione = df_visualizzazione.apply(applica_evidenziatore, axis=0)
 
             st.dataframe(df_visualizzazione, use_container_width=True)
             
@@ -297,7 +304,7 @@ def render_db_navigator(conn):
             st.warning("Nessun record da mostrare. Modifica o resetta i filtri di riga al punto 1.")
 
     # =========================================================================
-    # 3. REPORT TABELLARE DI SINTESI (CODA & REATTIVO AI FILTRI)
+    # 3. REPORT TABELLARE DI SINTESI (FORMATTATO AD 1 DECIMALE)
     # =========================================================================
     with st.expander("📈 3. Report Tabellare di Sintesi (Mini-Pivot sui dati filtrati)", expanded=True):
         if totale_righe == 0:
@@ -331,9 +338,11 @@ def render_db_navigator(conn):
                 try:
                     df_stats = conn.execute(query_pivot_completa).df()
                     df_stats_formatted = df_stats.copy()
+                    
+                    # Taglio ad 1 cifra decimale (.1f) per l'intero pivot di sintesi finanziario
                     for metric_col in ['SOMMA', 'MEDIA', 'MASSIMO', 'MINIMO']:
                         df_stats_formatted[metric_col] = df_stats_formatted[metric_col].apply(
-                            lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-"
+                            lambda x: f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-"
                         )
                     st.dataframe(df_stats_formatted, use_container_width=True, hide_index=True)
                 except Exception as e:
