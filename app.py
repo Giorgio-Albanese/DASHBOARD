@@ -29,7 +29,7 @@ st.set_page_config(
     page_icon=":material/analytics:"
 )
 
-# --- CSS PERSONALIZZATO ISTITUZIONALE - FIX COMPLETO E DEFINITIVO TAB ---
+# --- CSS PERSONALIZZATO ISTITUZIONALE (PULITO) ---
 st.markdown("""
     <style>
     /* Sfondo generale */
@@ -53,47 +53,6 @@ st.markdown("""
     /* Layout Logo Sidebar */
     [data-testid="stSidebar"] img { border-radius: 0px !important; }
     [data-testid="stSidebar"] [data-testid="stImage"] { padding: 10px 0px !important; }
-    
-    /* =========================================================================
-       SOLUZIONE DEFINITIVA PER I TAB (Elimina totalmente il rosso/arancione)
-       ========================================================================= */
-    
-    /* 1. Stato base per tutti i tab (Non Selezionati): testo grigio scuro */
-    button[data-baseweb="tab"], button[data-testid="stTab"] {
-        background-color: transparent !important;
-        color: #4A4A4A !important;
-        border-bottom: 2px solid transparent !important;
-    }
-    
-    /* 2. Forza TUTTI i sotto-elementi (testo, icone, markdown) a ereditare il colore del tab padre */
-    button[data-baseweb="tab"] *, button[data-testid="stTab"] * {
-        color: inherit !important;
-    }
-    
-    /* 3. Stato per il tab SELEZIONATO: Testo Verde HDI + Linea inferiore Verde fissa */
-    button[data-baseweb="tab"][aria-selected="true"], 
-    button[data-testid="stTab"][aria-selected="true"] {
-        color: #007A33 !important;
-        font-weight: bold !important;
-        border-bottom: 2px solid #007A33 !important;
-    }
-    
-    /* 4. DISATTIVA LA LINEA MOBILE DI STREAMLIT (Nasconde l'elemento nativo che restava rosso) */
-    div[data-testid="stTabList"] div[style*="background-color"],
-    div[role="tablist"] div[style*="background-color"] {
-        display: none !important;
-        background-color: transparent !important;
-        height: 0px !important;
-    }
-    
-    /* =========================================================================
-       FIX FOCUS SUI CAMPI DI TESTO E FILTRI
-       ========================================================================= */
-    .stTextInput div[data-baseweb="input"]:focus-within,
-    .stSelectbox div[data-baseweb="select"]:focus-within {
-        border-color: #007A33 !important;
-        box-shadow: 0 0 0 1px #007A33 !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
