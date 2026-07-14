@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import datetime
 
 def carica_metadati_db(conn):
     """Recupera le colonne e i tipi di dati per mappare i filtri corretti"""
@@ -7,14 +8,30 @@ def carica_metadati_db(conn):
     mappa_tipi = {}
     for _, row in info.iterrows():
         tipo_sql = str(row['type']).upper()
-        if any(x in tipo_sql for x in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC"]):
+        # Rilevamento campi numerici
+        if any(x in tipo_sql for x in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC", "REAL"]):
             mappa_tipi[row['name']] = "NUMERIC"
+        # Rilevamento campi data/tempo
+        elif any(x in tipo_sql for x in ["DATE", "TIME", "TIMESTAMP"]):
+            mappa_tipi[row['name']] = "DATE"
+        # Fallback su testo
         else:
             mappa_tipi[row['name']] = "TEXT"
     return mappa_tipi
 
+@st.cache_data(ttl=300)
+def ottieni_anni_univoci(colonna, _conn):
+    """Estrae gli anni univoci da una colonna data per popolare il dropdown"""
+    try:
+        query = f"SELECT DISTINCT YEAR({colonna}) AS anno FROM vista_polizze WHERE {colonna} IS NOT NULL ORDER BY anno DESC"
+        df_anni = _conn.execute(query).df()
+        return sorted(df_anni['anno'].dropna().astype(int).tolist(), reverse=True)
+    except Exception:
+        # Fallback se la colonna temporaneamente fallisce la conversione
+        return [2026, 2025, 2024, 2023, 2022, 2021, 2020]
+
 def render_db_navigator(conn):
-    st.markdown("### 🔍 Esploratore Dinamico con Report di Sintesi")
+    st.markdown("### 🔍 Esploratore Dinamico con Smart Dates & Badges")
     
     # --- INIZIALIZZAZIONE DELLO STATO ---
     if "lista_filtri" not in st.session_state:
@@ -30,13 +47,14 @@ def render_db_navigator(conn):
     # PANNELLO 1: FILTRI DI RIGA CONDIZIONALI (MINIMIZZABILE)
     # =========================================================================
     with st.expander("🛠️ 1. Configura Filtri di Riga Condizionali", expanded=True):
-        st.caption("Aggiungi filtri multipli in AND. Lascia vuoto il valore per disattivare il singolo filtro.")
+        st.caption("Aggiungi filtri multipli in AND. Gestione intelligente per i campi DATA con estrazione automatica dell'anno.")
         
         if st.button("➕ Aggiungi un nuovo filtro"):
             st.session_state["lista_filtri"].append({
                 "colonna": elenco_colonne[0],
                 "operatore": "Uguale a",
-                "valore": ""
+                "valore": "",
+                "tipo_data": "Solo Anno"  # Default per colonne date
             })
             st.rerun()
 
@@ -44,51 +62,146 @@ def render_db_navigator(conn):
         indici_da_rimuovere = []
         
         for i, filtro in enumerate(st.session_state["lista_filtri"]):
+            # Layout a 4 colonne per allineare i controlli del filtro
             col_f1, col_f2, col_f3, col_f4 = st.columns([3, 2, 4, 1])
             
             with col_f1:
-                filtro["colonna"] = st.selectbox(f"Colonna##{i}", elenco_colonne, index=elenco_colonne.index(filtro["colonna"]), label_visibility="collapsed", key=f"col_{i}")
-            
-            tipo_dato = metadati[filtro["colonna"]]
-            opzioni_operatori = ["Uguale a", "Diverso da", "Incluso in (lista, sep. da virgola)"]
-            if tipo_dato == "TEXT":
-                opzioni_operatori += ["Contiene", "Inizia con"]
-            else:
-                opzioni_operatori += ["Maggiore di (>)", "Minore di (<)"]
+                filtro["colonna"] = st.selectbox(
+                    f"Colonna##{i}", 
+                    elenco_colonne, 
+                    index=elenco_colonne.index(filtro["colonna"]), 
+                    label_visibility="collapsed", 
+                    key=f"col_{i}"
+                )
                 
+                # Sotto-selezione specifica per le date (Granularità)
+                tipo_dato = metadati[filtro["colonna"]]
+                if tipo_dato == "DATE":
+                    filtro["tipo_data"] = st.selectbox(
+                        f"TipoData##{i}",
+                        ["Solo Anno", "Data Intera"],
+                        index=0 if filtro.get("tipo_data", "Solo Anno") == "Solo Anno" else 1,
+                        key=f"tg_{i}",
+                        help="Scegli se filtrare per l'anno estratto o per data specifica"
+                    )
+            
+            # Adattamento degli operatori in base al tipo di dato rilevato
+            tipo_dato = metadati[filtro["colonna"]]
+            if tipo_dato == "TEXT":
+                opzioni_operatori = ["Uguale a", "Diverso da", "Contiene", "Inizia con", "Incluso in (lista, sep. da virgola)"]
+            elif tipo_dato == "NUMERIC":
+                opzioni_operatori = ["Uguale a", "Diverso da", "Maggiore di (>)", "Minore di (<)", "Dal (>=)", "Fino al (<=)"]
+            elif tipo_dato == "DATE":
+                if filtro.get("tipo_data") == "Solo Anno":
+                    opzioni_operatori = ["Uguale a", "Diverso da", "Dopo il (>)", "Prima del (<)", "Dal (>=)", "Fino al (<=)"]
+                else:
+                    opzioni_operatori = ["Uguale a", "Dopo la data (>)", "Prima della data (<)", "Dalla data (>=)", "Fino alla data (<=)"]
+
             with col_f2:
                 idx_op = 0
                 if filtro["operatore"] in opzioni_operatori:
                     idx_op = opzioni_operatori.index(filtro["operatore"])
-                filtro["operatore"] = st.selectbox(f"Operatore##{i}", opzioni_operatori, index=idx_op, label_visibility="collapsed", key=f"op_{i}")
+                filtro["operatore"] = st.selectbox(
+                    f"Operatore##{i}", 
+                    opzioni_operatori, 
+                    index=idx_op, 
+                    label_visibility="collapsed", 
+                    key=f"op_{i}"
+                )
                 
             with col_f3:
-                filtro["valore"] = st.text_input(f"Valore##{i}", value=filtro["valore"], placeholder="Valore da cercare...", label_visibility="collapsed", key=f"val_{i}")
+                # Rendering dinamico dell'input in base al tipo di dato
+                if tipo_dato == "TEXT" or tipo_dato == "NUMERIC":
+                    filtro["valore"] = st.text_input(
+                        f"Valore##{i}", 
+                        value=str(filtro["valore"]), 
+                        placeholder="Inserisci valore...", 
+                        label_visibility="collapsed", 
+                        key=f"val_{i}"
+                    )
+                
+                elif tipo_dato == "DATE":
+                    if filtro.get("tipo_data") == "Solo Anno":
+                        # Carica la lista degli anni univoci direttamente dal database
+                        anni_disponibili = ottieni_anni_univoci(filtro["colonna"], conn)
+                        if not anni_disponibili:
+                            anni_disponibili = [2026, 2025, 2024, 2023, 2022, 2021, 2020]
+                        
+                        # Calcolo indice di default per non resettare la selezione
+                        try:
+                            val_init = int(filtro["valore"])
+                            idx_anno = anni_disponibili.index(val_init) if val_init in anni_disponibili else 0
+                        except ValueError:
+                            idx_anno = 0
+                            
+                        anno_scelto = st.selectbox(
+                            f"Anno##{i}",
+                            options=anni_disponibili,
+                            index=idx_anno,
+                            label_visibility="collapsed",
+                            key=f"val_anno_{i}"
+                        )
+                        filtro["valore"] = str(anno_scelto)
+                    else:
+                        # Date picker per data intera
+                        val_init_date = datetime.date.today()
+                        if filtro["valore"]:
+                            try:
+                                val_init_date = pd.to_datetime(filtro["valore"]).date()
+                            except Exception:
+                                pass
+                        data_scelta = st.date_input(
+                            f"Data##{i}",
+                            value=val_init_date,
+                            label_visibility="collapsed",
+                            key=f"val_data_{i}"
+                        )
+                        filtro["valore"] = data_scelta.strftime("%Y-%m-%d")
                 
             with col_f4:
                 if st.button("🗑️", key=f"del_{i}", help="Rimuovi questo filtro"):
                     indici_da_rimuovere.append(i)
 
+            # --- PARSING SQL DEL SINGOLO FILTRO ---
             val_safe = str(filtro["valore"]).replace("'", "''").strip()
             if val_safe:
                 op = filtro["operatore"]
                 col = filtro["colonna"]
                 
-                if op == "Uguale a":
-                    clausole_where.append(f"{col} = '{val_safe}'" if tipo_dato == "TEXT" else f"{col} = {val_safe}")
-                elif op == "Diverso da":
-                    clausole_where.append(f"{col} <> '{val_safe}'" if tipo_dato == "TEXT" else f"{col} <> {val_safe}")
-                elif op == "Contiene":
-                    clausole_where.append(f"{col} ILIKE '%{val_safe}%'")
-                elif op == "Inizia con":
-                    clausole_where.append(f"{col} ILIKE '{val_safe}%'")
-                elif op == "Maggiore di (>)":
-                    clausole_where.append(f"{col} > {val_safe}")
-                elif op == "Minore di (<)":
-                    clausole_where.append(f"{col} < {val_safe}")
-                elif op == "Incluso in (lista, sep. da virgola)":
-                    elementi = ", ".join([f"'{x.strip()}'" if tipo_dato == "TEXT" else x.strip() for x in val_safe.split(",")])
-                    clausole_where.append(f"{col} IN ({elementi})")
+                if tipo_dato == "TEXT":
+                    if op == "Uguale a": clausole_where.append(f"{col} = '{val_safe}'")
+                    elif op == "Diverso da": clausole_where.append(f"{col} <> '{val_safe}'")
+                    elif op == "Contiene": clausole_where.append(f"{col} ILIKE '%{val_safe}%'")
+                    elif op == "Inizia con": clausole_where.append(f"{col} ILIKE '{val_safe}%'")
+                    elif op == "Incluso in (lista, sep. da virgola)":
+                        elementi = ", ".join([f"'{x.strip()}'" for x in val_safe.split(",")])
+                        clausole_where.append(f"{col} IN ({elementi})")
+                
+                elif tipo_dato == "NUMERIC":
+                    if op == "Uguale a": clausole_where.append(f"{col} = {val_safe}")
+                    elif op == "Diverso da": clausole_where.append(f"{col} <> {val_safe}")
+                    elif op == "Maggiore di (>)": clausole_where.append(f"{col} > {val_safe}")
+                    elif op == "Minore di (<)": clausole_where.append(f"{col} < {val_safe}")
+                    elif op == "Dal (>=)": clausole_where.append(f"{col} >= {val_safe}")
+                    elif op == "Fino al (<=)": clausole_where.append(f"{col} <= {val_safe}")
+                
+                elif tipo_dato == "DATE":
+                    if filtro.get("tipo_data") == "Solo Anno":
+                        # Estrattore anno nativo DuckDB
+                        campo_sql = f"YEAR({col})"
+                        if op == "Uguale a": clausole_where.append(f"{campo_sql} = {val_safe}")
+                        elif op == "Diverso da": clausole_where.append(f"{campo_sql} <> {val_safe}")
+                        elif op == "Dopo il (>)": clausole_where.append(f"{campo_sql} > {val_safe}")
+                        elif op == "Prima del (<)": clausole_where.append(f"{campo_sql} < {val_safe}")
+                        elif op == "Dal (>=)": clausole_where.append(f"{campo_sql} >= {val_safe}")
+                        elif op == "Fino al (<=)": clausole_where.append(f"{campo_sql} <= {val_safe}")
+                    else:
+                        # Query su data completa
+                        if op == "Uguale a": clausole_where.append(f"{col} = '{val_safe}'")
+                        elif op == "Dopo la data (>)": clausole_where.append(f"{col} > '{val_safe}'")
+                        elif op == "Prima della data (<)": clausole_where.append(f"{col} < '{val_safe}'")
+                        elif op == "Dalla data (>=)": clausole_where.append(f"{col} >= '{val_safe}'")
+                        elif op == "Fino alla data (<=)": clausole_where.append(f"{col} <= '{val_safe}'")
 
         if indici_da_rimuovere:
             for idx in sorted(indici_da_rimuovere, reverse=True):
@@ -104,7 +217,7 @@ def render_db_navigator(conn):
         return
 
     # =========================================================================
-    # PANNELLO 2: REPORT TABELLARE DI SINTESI (FISSATO CON LE DOPPIE VIRGOLETTE)
+    # PANNELLO 2: REPORT TABELLARE DI SINTESI (MINI-PIVOT)
     # =========================================================================
     with st.expander("📈 2. Report Tabellare di Sintesi (Mini-Pivot)", expanded=True):
         if totale_righe == 0:
@@ -123,7 +236,6 @@ def render_db_navigator(conn):
             if colonne_stats_scelte:
                 pezzi_query = []
                 for col in colonne_stats_scelte:
-                    # Sostituito [Variabile Finanziaria] con "Variabile Finanziaria"
                     pezzi_query.append(f"""
                         SELECT 
                             '{col}' AS "Variabile Finanziaria", 
@@ -138,15 +250,12 @@ def render_db_navigator(conn):
                 
                 try:
                     df_stats = conn.execute(query_pivot_completa).df()
-                    
                     df_stats_formatted = df_stats.copy()
                     for metric_col in ['SOMMA', 'MEDIA', 'MASSIMO', 'MINIMO']:
                         df_stats_formatted[metric_col] = df_stats_formatted[metric_col].apply(
                             lambda x: f"{x:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-"
                         )
-                    
                     st.dataframe(df_stats_formatted, use_container_width=True, hide_index=True)
-                    
                 except Exception as e:
                     st.error(f"Errore durante il calcolo del report di sintesi: {e}")
             else:
@@ -164,10 +273,56 @@ def render_db_navigator(conn):
         colonne_sql = ", ".join(colonne_scelte) if colonne_scelte else "*"
 
     # =========================================================================
-    # PANNELLO 4: PREVIEW DATI E DOWNLOAD (MINIMIZZABILE)
+    # PANNELLO 4: PREVIEW DATI, BADGES & HIGHLIGHT (MINIMIZZABILE)
     # =========================================================================
     with st.expander("👀 4. Preview dei Dati (Snippet) e Download Estrazione", expanded=True):
         if totale_righe > 0:
+            
+            # --- GENERAZIONE DEI BADGES DEI FILTRI ATTIVI ---
+            lista_badges = []
+            colonne_attive_filtrate = []
+            
+            for f in st.session_state["lista_filtri"]:
+                valore_filtro = f.get("valore", "").strip()
+                if valore_filtro:
+                    col_name = f["colonna"]
+                    op_label = f["operatore"].lower()
+                    colonne_attive_filtrate.append(col_name) # Per evidenziarla in tabella
+                    
+                    # Etichetta badge parlante
+                    if metadati[col_name] == "DATE" and f.get("tipo_data") == "Solo Anno":
+                        testo_badge = f"📅 Anno({col_name}) {op_label} {valore_filtro}"
+                    elif metadati[col_name] == "DATE":
+                        testo_badge = f"📅 {col_name} {op_label} {valore_filtro}"
+                    elif metadati[col_name] == "NUMERIC":
+                        testo_badge = f"🔢 {col_name} {op_label} {valore_filtro}"
+                    else:
+                        testo_badge = f"🔤 {col_name} {op_label} '{valore_filtro}'"
+                        
+                    html_badge = f"""
+                    <span style="
+                        background-color: #1E293B; 
+                        color: #38BDF8; 
+                        padding: 4px 10px; 
+                        border-radius: 8px; 
+                        font-size: 0.8rem; 
+                        font-weight: 600;
+                        margin-right: 6px; 
+                        display: inline-block; 
+                        margin-bottom: 6px;
+                        border: 1px solid #38BDF8;
+                    ">{testo_badge}</span>
+                    """
+                    lista_badges.append(html_badge)
+            
+            # Rendering dei badge
+            if lista_badges:
+                st.markdown("**Filtri applicati correnti:**")
+                st.markdown("".join(lista_badges), unsafe_allow_html=True)
+            else:
+                st.caption("Nessun filtro attivo (Visualizzazione totale portafoglio)")
+
+            # Layout controlli inferiori
             col_info_view, col_dl = st.columns([3, 1])
             with col_info_view:
                 righe_mostrate = min(st.session_state["step_righe"], totale_righe)
@@ -190,11 +345,26 @@ def render_db_navigator(conn):
                     use_container_width=True
                 )
 
+            # Query limitata per la preview tabellare
             query_anteprima = f"SELECT {colonne_sql} FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
             df_preview = conn.execute(query_anteprima).df()
             
-            st.dataframe(df_preview, use_container_width=True)
+            # --- EVIDENZIAZIONE DELLE COLONNE FILTRATE (STILE EXCEL) ---
+            # Se ci sono colonne filtrate visibili nella preview, le coloriamo con un fondo azzurro chiarissimo
+            def applica_evidenziatore(colonna_dati):
+                if colonna_dati.name in colonne_attive_filtrate:
+                    # Tinta blu navy molto leggera per la dark mode o light mode di Streamlit
+                    return ['background-color: rgba(56, 189, 248, 0.12)'] * len(colonna_dati)
+                return [''] * len(colonna_dati)
+
+            if len(colonne_attive_filtrate) > 0 and not df_preview.empty:
+                df_visualizzazione = df_preview.style.apply(applica_evidenziatore, axis=0)
+            else:
+                df_visualizzazione = df_preview
+
+            st.dataframe(df_visualizzazione, use_container_width=True)
             
+            # Tasto "Mostra Altro"
             if st.session_state["step_righe"] < totale_righe:
                 if st.button("🔽 Mostra altre 10 righe", use_container_width=True):
                     st.session_state["step_righe"] += 10
