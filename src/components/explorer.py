@@ -2,14 +2,14 @@ import streamlit as st
 import pandas as pd
 import datetime
 import copy  # Necessario per clonare lo stato dei filtri senza riferimenti condivisi
+import warnings
 
 def is_date_column_by_sampling(conn, col_name):
     """
     Ispeziona un campione di dati reali lato database per capire 
-    se la colonna contiene date in qualsiasi formato (italiano, ISO, ecc.)
+    se la colonna contiene date in qualsiasi formato.
     """
     try:
-        # 1. Preleviamo un campione veloce di 15 righe non vuote e non nulle
         query = f"""
             SELECT "{col_name}" 
             FROM vista_polizze 
@@ -21,27 +21,22 @@ def is_date_column_by_sampling(conn, col_name):
         if df_sample.empty:
             return False
         
-        # Puliamo i valori trasformandoli in stringhe senza spazi bianchi ai lati
         valori = df_sample[col_name].astype(str).str.strip()
         totale = len(valori)
         
-        # 2. CINTURA DI SICUREZZA: Se la colonna contiene numeri interi puri (es. "1002345"),
-        # Pandas potrebbe erroneamente interpretarli come timestamp unix. Li escludiamo subito.
         numeri_puri = valori.str.match(r'^\d+$').sum()
-        if (numeri_puri / totale) > 0.3:  # Se più del 30% del campione sono numeri puri, non è una data
+        if (numeri_puri / totale) > 0.3:  
             return False
             
-        # 3. PARSING FLESSIBILE: Pandas proverà a indovinare qualsiasi formato di data.
-        # 'dayfirst=True' è fondamentale per i formati italiani tipo DD/MM/YYYY.
-        # 'errors=coerce' trasforma i fallimenti di conversione in NaT (Not a Time).
-        date_convertite = pd.to_datetime(valori, errors='coerce', dayfirst=True)
+        # Silenziamo il warning specifico di Pandas usando format="mixed"
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", UserWarning)
+            date_convertite = pd.to_datetime(valori, errors='coerce', dayfirst=True, format='mixed')
+            
         valide = date_convertite.notna().sum()
-        
-        # 4. DECISIONE: Se almeno il 70% del campione non vuoto è una data valida, la promuoviamo a DATE
         return (valide / totale) >= 0.7
         
     except Exception:
-        # In caso di errore imprevisto, restituiamo False per sicurezza
         return False
 
 
@@ -143,7 +138,7 @@ def render_db_navigator(conn):
     
     col_pulsanti_top_1, col_pulsanti_top_2 = st.columns([1, 1])
     with col_pulsanti_top_1:
-        if st.button("➕ Aggiungi un nuovo filtro", use_container_width=True):
+        if st.button("➕ Aggiungi un nuovo filtro", width="stretch"):
             st.session_state["filtro_id_counter"] += 1
             st.session_state["lista_filtri"].append({
                 "id": st.session_state["filtro_id_counter"],
@@ -155,7 +150,7 @@ def render_db_navigator(conn):
             st.rerun()
             
     with col_pulsanti_top_2:
-        if st.button("🗑️ Rimuovi tutti i filtri", use_container_width=True):
+        if st.button("🗑️ Rimuovi tutti i filtri", width="stretch"):
             st.session_state["lista_filtri"] = []
             st.session_state["lista_filtri_applicati"] = []
             st.session_state["step_righe"] = 10
@@ -308,7 +303,7 @@ def render_db_navigator(conn):
     
     with col_applica:
         bottone_tipo = "primary" if ha_modifiche_pendenti else "secondary"
-        if st.button("⚡ Applica Filtri", type=bottone_tipo, use_container_width=True):
+        if st.button("⚡ Applica Filtri", type=bottone_tipo, width="stretch"):
             st.session_state["lista_filtri_applicati"] = copy.deepcopy(st.session_state["lista_filtri"])
             st.rerun()
             
@@ -437,7 +432,7 @@ def render_db_navigator(conn):
                 data=csv_data,
                 file_name="estrazione_filtrata_completa.csv",
                 mime="text/csv",
-                use_container_width=True
+                width="stretch"
             )
 
         query_anteprima = f"SELECT * FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
@@ -458,10 +453,10 @@ def render_db_navigator(conn):
         if len(colonne_attive_filtrate) > 0 and not df_preview.empty:
             df_visualizzazione = df_visualizzazione.apply(applica_evidenziatore, axis=0)
 
-        st.dataframe(df_visualizzazione, use_container_width=True)
+        st.dataframe(df_visualizzazione, width="stretch")
         
         if st.session_state["step_righe"] < totale_righe:
-            if st.button("🔽 Mostra altre 10 righe", use_container_width=True):
+            if st.button("🔽 Mostra altre 10 righe", width="stretch"):
                 st.session_state["step_righe"] += 10
                 st.rerun()
     else:
@@ -505,6 +500,6 @@ def render_db_navigator(conn):
                     df_stats_formatted[metric_col] = df_stats_formatted[metric_col].apply(
                         lambda x: f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-"
                     )
-                st.dataframe(df_stats_formatted, use_container_width=True, hide_index=True)
+                st.dataframe(df_stats_formatted, width="stretch", hide_index=True)
             except Exception as e:
                 st.error(f"Errore durante il calcolo del report: {e}")

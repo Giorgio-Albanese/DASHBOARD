@@ -60,7 +60,7 @@ st.markdown("""
 with st.sidebar:
     path_logo = get_resource_path("logo_hdi.png")
     if os.path.exists(path_logo):
-        st.image(Image.open(path_logo), use_container_width=True)
+        st.image(Image.open(path_logo), width="stretch")
     st.markdown("### ⚙️ Area Riservata")
     st.divider()
 
@@ -121,7 +121,7 @@ if not st.session_state["sbloccato"]:
     with col2:
         st.markdown('<div class="hdi-card"><h4>Autenticazione Richiesta</h4>', unsafe_allow_html=True)
         password_input = st.text_input("Password di Decifratura dei Dati", type="password")
-        pulsante_sblocco = st.button("Sblocca e Carica Dati", use_container_width=True)
+        pulsante_sblocco = st.button("Sblocca e Carica Dati", width="stretch")
         st.markdown('</div>', unsafe_allow_html=True)
         
         if pulsante_sblocco and password_input:
@@ -157,7 +157,7 @@ if not st.session_state["sbloccato"]:
 else:
     with st.sidebar:
         st.sidebar.markdown("**Sessione Attiva**")
-        if st.sidebar.button("🔒 Chiudi Sessione (Cancella RAM)", use_container_width=True):
+        if st.sidebar.button("🔒 Chiudi Sessione (Cancella RAM)", width="stretch"):
             if st.session_state["db_conn"]:
                 try: st.session_state["db_conn"].close()
                 except: pass
