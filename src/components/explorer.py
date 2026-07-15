@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import datetime
+import copy  # Necessario per clonare lo stato dei filtri senza riferimenti condivisi
 
 def carica_metadati_db(conn):
     """Recupera le colonne e mappa i filtri corretti, forzando la gestione data se il nome lo suggerisce"""
@@ -52,6 +53,8 @@ def render_db_navigator(conn):
     # --- INIZIALIZZAZIONE DELLO STATO ---
     if "lista_filtri" not in st.session_state:
         st.session_state["lista_filtri"] = []  
+    if "lista_filtri_applicati" not in st.session_state:
+        st.session_state["lista_filtri_applicati"] = []  # Stato effettivo usato per la query
     if "step_righe" not in st.session_state:
         st.session_state["step_righe"] = 10    
     if "filtro_id_counter" not in st.session_state:
@@ -61,31 +64,40 @@ def render_db_navigator(conn):
     elenco_colonne = list(metadati.keys())
     colonne_numeriche = [col for col, tipo in metadati.items() if tipo == "NUMERIC"]
     
-    # Controllo di sicurezza e retrocompatibilità per assegnare ID persistenti
+    # Controllo di sicurezza per gli ID persistenti
     for filtro in st.session_state["lista_filtri"]:
         if "id" not in filtro:
             st.session_state["filtro_id_counter"] += 1
             filtro["id"] = st.session_state["filtro_id_counter"]
     
     # =========================================================================
-    # 1. CONFIGURAZIONE FILTRI (Eredita lo stile .hdi-card)
+    # 1. CONFIGURAZIONE FILTRI (Stile .hdi-card)
     # =========================================================================
     st.markdown('<div class="hdi-card"><h3>🎛️ Filtri</h3></div>', unsafe_allow_html=True)
     
-    if st.button("➕ Aggiungi un nuovo filtro"):
-        st.session_state["filtro_id_counter"] += 1
-        st.session_state["lista_filtri"].append({
-            "id": st.session_state["filtro_id_counter"],
-            "colonna": elenco_colonne[0],
-            "operatore": "Uguale a",
-            "valore": "",
-            "tipo_data": "Solo Anno"
-        })
-        st.rerun()
+    col_pulsanti_top_1, col_pulsanti_top_2 = st.columns([1, 1])
+    with col_pulsanti_top_1:
+        if st.button("➕ Aggiungi un nuovo filtro", use_container_width=True):
+            st.session_state["filtro_id_counter"] += 1
+            st.session_state["lista_filtri"].append({
+                "id": st.session_state["filtro_id_counter"],
+                "colonna": elenco_colonne[0],
+                "operatore": "Uguale a",
+                "valore": "",
+                "tipo_data": "Solo Anno"
+            })
+            st.rerun()
+            
+    with col_pulsanti_top_2:
+        if st.button("🗑️ Rimuovi tutti i filtri", use_container_width=True):
+            st.session_state["lista_filtri"] = []
+            st.session_state["lista_filtri_applicati"] = []
+            st.session_state["step_righe"] = 10
+            st.rerun()
 
-    clausole_where = []
     indici_da_rimuovere = []
     
+    # Rendering dei filtri basato su lista_filtri (modificabili liberamente)
     for i, filtro in enumerate(st.session_state["lista_filtri"]):
         f_id = filtro["id"]
         col_f1, col_f2, col_f3, col_f4 = st.columns([3, 2, 4, 1])
@@ -98,7 +110,6 @@ def render_db_navigator(conn):
                 label_visibility="collapsed", key=f"col_{f_id}"
             )
             
-            # Reset preventivo del valore se l'utente cambia colonna per evitare crash o disallineamenti di tipo
             if filtro["colonna"] != colonna_precedente:
                 filtro["valore"] = ""
                 tipo_nuovo = metadati[filtro["colonna"]]
@@ -115,7 +126,6 @@ def render_db_navigator(conn):
                     label_visibility="collapsed"
                 )
         
-        # Rigenerazione coerente degli operatori basata sul tipo_dato corrente
         if tipo_dato == "TEXT":
             opzioni_operatori = ["Uguale a", "Diverso da", "Contiene", "Inizia con", "Incluso in (lista, sep. da virgola)"]
         elif tipo_dato == "NUMERIC":
@@ -140,14 +150,12 @@ def render_db_navigator(conn):
                 index=idx_op, label_visibility="collapsed", key=f"op_{f_id}"
             )
             
-            # Se cambia l'operatore (es. da "Uguale a" a "Contiene"), ripuliamo il valore per non trascinare dati errati
             if filtro["operatore"] != operatore_precedente:
                 filtro["valore"] = ""
                 st.rerun()
             
         with col_f3:
             if tipo_dato == "TEXT":
-                # --- MODIFICA RICHIESTA: Selettore a tendina per testi ---
                 if filtro["operatore"] in ["Uguale a", "Diverso da"]:
                     modalita_disponibili = ottieni_modalita_uniche(filtro["colonna"], conn)
                     if modalita_disponibili:
@@ -165,7 +173,6 @@ def render_db_navigator(conn):
                             placeholder="Nessun dato presente...", label_visibility="collapsed", key=f"val_txt_vuoto_{f_id}", disabled=True
                         )
                 else:
-                    # Inserimento testuale classico per pattern liberi
                     filtro["valore"] = st.text_input(
                         f"Valore##{f_id}", value=str(filtro["valore"]), 
                         placeholder="Inserisci pattern...", label_visibility="collapsed", key=f"val_txt_input_{f_id}"
@@ -208,10 +215,43 @@ def render_db_navigator(conn):
             if st.button("🗑️", key=f"del_{f_id}", help="Rimuovi questo filtro"):
                 indici_da_rimuovere.append(i)
 
-        val_safe = str(filtro["valore"]).replace("'", "''").strip()
+    if indici_da_rimuovere:
+        for idx in sorted(indici_da_rimuovere, reverse=True):
+            st.session_state["lista_filtri"].pop(idx)
+        st.rerun()
+
+    # --- CONTROLLO APPLICAZIONE FILTRI ---
+    ha_modifiche_pendenti = (st.session_state["lista_filtri"] != st.session_state["lista_filtri_applicati"])
+    
+    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+    col_applica, col_stato = st.columns([1, 2])
+    
+    with col_applica:
+        # Il bottone diventa visivamente prioritario se ci sono modifiche pendenti
+        bottone_tipo = "primary" if ha_modifiche_pendenti else "secondary"
+        if st.button("⚡ Applica Filtri", type=bottone_tipo, use_container_width=True):
+            st.session_state["lista_filtri_applicati"] = copy.deepcopy(st.session_state["lista_filtri"])
+            st.rerun()
+            
+    with col_stato:
+        if ha_modifiche_pendenti:
+            st.warning("⚠️ Modifiche pendenti. Clicca su 'Applica Filtri' per aggiornare il database.")
+        else:
+            st.success("✅ Filtri sincronizzati con il database.")
+
+    # =========================================================================
+    # 2. COSTRUZIONE DELLE CLAUSOLE SQL (Strictly basato su lista_filtri_applicati)
+    # =========================================================================
+    clausole_where = []
+    colonne_attive_filtrate = []
+    
+    for filtro_app in st.session_state["lista_filtri_applicati"]:
+        val_safe = str(filtro_app["valore"]).replace("'", "''").strip()
         if val_safe:
-            op = filtro["operatore"]
-            col = filtro["colonna"]
+            op = filtro_app["operatore"]
+            col = filtro_app["colonna"]
+            tipo_dato = metadati[col]
+            colonne_attive_filtrate.append(col)
             
             if tipo_dato == "TEXT":
                 if op == "Uguale a": clausole_where.append(f"{col} = '{val_safe}'")
@@ -233,7 +273,7 @@ def render_db_navigator(conn):
             elif tipo_dato == "DATE":
                 campo_sql_safe = costruisci_campo_data_safe(col)
                 
-                if filtro.get("tipo_data", "Solo Anno") == "Solo Anno":
+                if filtro_app.get("tipo_data", "Solo Anno") == "Solo Anno":
                     campo_anno = f"YEAR({campo_sql_safe})"
                     if op == "Uguale a": clausole_where.append(f"{campo_anno} = {val_safe}")
                     elif op == "Diverso da": clausole_where.append(f"{campo_anno} <> {val_safe}")
@@ -248,11 +288,6 @@ def render_db_navigator(conn):
                     elif op == "Dalla data (>=)": clausole_where.append(f"{campo_sql_safe} >= CAST('{val_safe}' AS DATE)")
                     elif op == "Fino alla data (<=)": clausole_where.append(f"{campo_sql_safe} <= CAST('{val_safe}' AS DATE)")
 
-    if indici_da_rimuovere:
-        for idx in sorted(indici_da_rimuovere, reverse=True):
-            st.session_state["lista_filtri"].pop(idx)
-        st.rerun()
-
     stringa_where_completa = " WHERE " + " AND ".join(clausole_where) if clausole_where else ""
 
     try:
@@ -262,21 +297,18 @@ def render_db_navigator(conn):
         return
 
     # =========================================================================
-    # 2. PREVIEW DATI
+    # 3. PREVIEW DATI (Sincronizzata con i filtri applicati)
     # =========================================================================
     st.markdown('<div class="hdi-card"><h3>👀 Preview e Download</h3></div>', unsafe_allow_html=True)
     if totale_righe > 0:
         
-        # --- GENERAZIONE BADGES CON BORDI VERDE HDI ---
+        # --- GENERAZIONE BADGES (Usa lista_filtri_applicati) ---
         lista_badges = []
-        colonne_attive_filtrate = []
-        
-        for f in st.session_state["lista_filtri"]:
+        for f in st.session_state["lista_filtri_applicati"]:
             valore_filtro = f.get("valore", "").strip()
             if valore_filtro:
                 col_name = f["colonna"]
                 op_label = f["operatore"].lower()
-                colonne_attive_filtrate.append(col_name)
                 
                 if metadati[col_name] == "DATE" and f.get("tipo_data") == "Solo Anno":
                     testo_badge = f"📅 Anno({col_name}) {op_label} {valore_filtro}"
@@ -332,7 +364,7 @@ def render_db_navigator(conn):
         query_anteprima = f"SELECT * FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
         df_preview = conn.execute(query_anteprima).df()
         
-        # --- FORMATTAZIONE AD 1 DECIMALE E HIGHLIGHT VERDE ---
+        # Format decimali e highlight
         colonne_float = df_preview.select_dtypes(include=['float64', 'float32']).columns.tolist()
         df_visualizzazione = df_preview.style
         
@@ -355,10 +387,10 @@ def render_db_navigator(conn):
                 st.session_state["step_righe"] += 10
                 st.rerun()
     else:
-        st.warning("Nessun record da mostrare. Modifica o resetta i filtri di riga al punto 1.")
+        st.warning("Nessun record da mostrare con i filtri applicati.")
 
     # =========================================================================
-    # 3. REPORT TABELLARE DI SINTESI
+    # 4. REPORT TABELLARE DI SINTESI
     # =========================================================================
     st.markdown('<div class="hdi-card"><h3>📈 Statistiche di sintesi</h3></div>', unsafe_allow_html=True)
     if totale_righe == 0:
