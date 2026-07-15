@@ -395,22 +395,23 @@ def render_db_navigator(conn):
         query_anteprima = f"SELECT * FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
         df_preview = conn.execute(query_anteprima).df()
         
+# --- NUOVO CODICE (PIÙ ROBUSTO) ---
+        # Configurazione nativa di Streamlit per i numeri
+        column_config = {}
         colonne_float = df_preview.select_dtypes(include=['float64', 'float32']).columns.tolist()
-        df_visualizzazione = df_preview.style
         
-        if colonne_float:
-            fmt_dict = {col: lambda x: f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-" for col in colonne_float}
-            df_visualizzazione = df_visualizzazione.format(fmt_dict)
+        for col in colonne_float:
+            column_config[col] = st.column_config.NumberColumn(
+                col,
+                format="%.1f" # Format specificato nativamente
+            )
         
-        def applica_evidenziatore(colonna_dati):
-            if colonna_dati.name in colonne_attive_filtrate:
-                return ['background-color: rgba(0, 122, 51, 0.05)'] * len(colonna_dati)
-            return [''] * len(colonna_dati)
-
-        if len(colonne_attive_filtrate) > 0 and not df_preview.empty:
-            df_visualizzazione = df_visualizzazione.apply(applica_evidenziatore, axis=0)
-
-        st.dataframe(df_visualizzazione, use_container_width=True)
+        # Rendering diretto del dataframe (senza Styler)
+        st.dataframe(
+            df_preview, 
+            use_container_width=True,
+            column_config=column_config
+        )
         
         if st.session_state["step_righe"] < totale_righe:
             if st.button("🔽 Mostra altre 10 righe", use_container_width=True):
