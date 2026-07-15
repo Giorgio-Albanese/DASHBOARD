@@ -38,16 +38,34 @@ def ottieni_anni_univoci(colonna, _conn):
     except Exception:
         return [2026, 2025, 2024, 2023, 2022, 2021, 2020]
 
+@st.cache_data(ttl=300)
+def ottieni_modalita_uniche(colonna, _conn):
+    """Estrae in modo sicuro le modalità uniche per le colonne di tipo TEXT"""
+    try:
+        query = f'SELECT DISTINCT "{colonna}" FROM vista_polizze WHERE "{colonna}" IS NOT NULL ORDER BY "{colonna}"'
+        df_unici = _conn.execute(query).df()
+        return df_unici[colonna].astype(str).tolist()
+    except Exception:
+        return []
+
 def render_db_navigator(conn):
     # --- INIZIALIZZAZIONE DELLO STATO ---
     if "lista_filtri" not in st.session_state:
         st.session_state["lista_filtri"] = []  
     if "step_righe" not in st.session_state:
         st.session_state["step_righe"] = 10    
+    if "filtro_id_counter" not in st.session_state:
+        st.session_state["filtro_id_counter"] = 0
         
     metadati = carica_metadati_db(conn)
     elenco_colonne = list(metadati.keys())
     colonne_numeriche = [col for col, tipo in metadati.items() if tipo == "NUMERIC"]
+    
+    # Controllo di sicurezza e retrocompatibilità per assegnare ID persistenti
+    for filtro in st.session_state["lista_filtri"]:
+        if "id" not in filtro:
+            st.session_state["filtro_id_counter"] += 1
+            filtro["id"] = st.session_state["filtro_id_counter"]
     
     # =========================================================================
     # 1. CONFIGURAZIONE FILTRI (Eredita lo stile .hdi-card)
@@ -55,7 +73,9 @@ def render_db_navigator(conn):
     st.markdown('<div class="hdi-card"><h3>🎛️ Filtri</h3></div>', unsafe_allow_html=True)
     
     if st.button("➕ Aggiungi un nuovo filtro"):
+        st.session_state["filtro_id_counter"] += 1
         st.session_state["lista_filtri"].append({
+            "id": st.session_state["filtro_id_counter"],
             "colonna": elenco_colonne[0],
             "operatore": "Uguale a",
             "valore": "",
@@ -67,30 +87,41 @@ def render_db_navigator(conn):
     indici_da_rimuovere = []
     
     for i, filtro in enumerate(st.session_state["lista_filtri"]):
+        f_id = filtro["id"]
         col_f1, col_f2, col_f3, col_f4 = st.columns([3, 2, 4, 1])
         
         with col_f1:
+            colonna_precedente = filtro["colonna"]
             filtro["colonna"] = st.selectbox(
-                f"Colonna##{i}", elenco_colonne, 
+                f"Colonna##{f_id}", elenco_colonne, 
                 index=elenco_colonne.index(filtro["colonna"]), 
-                label_visibility="collapsed", key=f"col_{i}"
+                label_visibility="collapsed", key=f"col_{f_id}"
             )
+            
+            # Reset preventivo del valore se l'utente cambia colonna per evitare crash o disallineamenti di tipo
+            if filtro["colonna"] != colonna_precedente:
+                filtro["valore"] = ""
+                tipo_nuovo = metadati[filtro["colonna"]]
+                if tipo_nuovo == "DATE":
+                    filtro["tipo_data"] = "Solo Anno"
+                st.rerun()
             
             tipo_dato = metadati[filtro["colonna"]]
             if tipo_dato == "DATE":
                 filtro["tipo_data"] = st.selectbox(
-                    f"TipoData##{i}", ["Solo Anno", "Data Intera"],
+                    f"TipoData##{f_id}", ["Solo Anno", "Data Intera"],
                     index=0 if filtro.get("tipo_data", "Solo Anno") == "Solo Anno" else 1,
-                    key=f"tg_{i}"
+                    key=f"tg_{f_id}",
+                    label_visibility="collapsed"
                 )
         
-        tipo_dato = metadati[filtro["colonna"]]
+        # Rigenerazione coerente degli operatori basata sul tipo_dato corrente
         if tipo_dato == "TEXT":
             opzioni_operatori = ["Uguale a", "Diverso da", "Contiene", "Inizia con", "Incluso in (lista, sep. da virgola)"]
         elif tipo_dato == "NUMERIC":
             opzioni_operatori = ["Uguale a", "Diverso da", "Maggiore di (>)", "Minore di (<)", "Dal (>=)", "Fino al (<=)"]
         elif tipo_dato == "DATE":
-            if filtro.get("tipo_data") == "Solo Anno":
+            if filtro.get("tipo_data", "Solo Anno") == "Solo Anno":
                 opzioni_operatori = ["Uguale a", "Diverso da", "Dopo il (>)", "Prima del (<)", "Dal (>=)", "Fino al (<=)"]
             else:
                 opzioni_operatori = ["Uguale a", "Dopo la data (>)", "Prima della data (<)", "Dalla data (>=)", "Fino alla data (<=)"]
@@ -99,19 +130,54 @@ def render_db_navigator(conn):
             idx_op = 0
             if filtro["operatore"] in opzioni_operatori:
                 idx_op = opzioni_operatori.index(filtro["operatore"])
+            else:
+                filtro["operatore"] = opzioni_operatori[0]
+                idx_op = 0
+                
+            operatore_precedente = filtro["operatore"]
             filtro["operatore"] = st.selectbox(
-                f"Operatore##{i}", opzioni_operatori, 
-                index=idx_op, label_visibility="collapsed", key=f"op_{i}"
+                f"Operatore##{f_id}", opzioni_operatori, 
+                index=idx_op, label_visibility="collapsed", key=f"op_{f_id}"
             )
             
+            # Se cambia l'operatore (es. da "Uguale a" a "Contiene"), ripuliamo il valore per non trascinare dati errati
+            if filtro["operatore"] != operatore_precedente:
+                filtro["valore"] = ""
+                st.rerun()
+            
         with col_f3:
-            if tipo_dato == "TEXT" or tipo_dato == "NUMERIC":
+            if tipo_dato == "TEXT":
+                # --- MODIFICA RICHIESTA: Selettore a tendina per testi ---
+                if filtro["operatore"] in ["Uguale a", "Diverso da"]:
+                    modalita_disponibili = ottieni_modalita_uniche(filtro["colonna"], conn)
+                    if modalita_disponibili:
+                        val_attuale = str(filtro["valore"])
+                        idx_val = modalita_disponibili.index(val_attuale) if val_attuale in modalita_disponibili else 0
+                        
+                        valore_scelto = st.selectbox(
+                            f"Valore##{f_id}", options=modalita_disponibili,
+                            index=idx_val, label_visibility="collapsed", key=f"val_txt_{f_id}"
+                        )
+                        filtro["valore"] = valore_scelto
+                    else:
+                        filtro["valore"] = st.text_input(
+                            f"Valore##{f_id}", value="", 
+                            placeholder="Nessun dato presente...", label_visibility="collapsed", key=f"val_txt_vuoto_{f_id}", disabled=True
+                        )
+                else:
+                    # Inserimento testuale classico per pattern liberi
+                    filtro["valore"] = st.text_input(
+                        f"Valore##{f_id}", value=str(filtro["valore"]), 
+                        placeholder="Inserisci pattern...", label_visibility="collapsed", key=f"val_txt_input_{f_id}"
+                    )
+                    
+            elif tipo_dato == "NUMERIC":
                 filtro["valore"] = st.text_input(
-                    f"Valore##{i}", value=str(filtro["valore"]), 
-                    placeholder="Inserisci valore...", label_visibility="collapsed", key=f"val_{i}"
+                    f"Valore##{f_id}", value=str(filtro["valore"]), 
+                    placeholder="Inserisci valore numerico...", label_visibility="collapsed", key=f"val_num_{f_id}"
                 )
             elif tipo_dato == "DATE":
-                if filtro.get("tipo_data") == "Solo Anno":
+                if filtro.get("tipo_data", "Solo Anno") == "Solo Anno":
                     anni_disponibili = ottieni_anni_univoci(filtro["colonna"], conn)
                     try:
                         val_init = int(filtro["valore"])
@@ -120,8 +186,8 @@ def render_db_navigator(conn):
                         idx_anno = 0
                         
                     anno_scelto = st.selectbox(
-                        f"Anno##{i}", options=anni_disponibili, 
-                        index=idx_anno, label_visibility="collapsed", key=f"val_anno_{i}"
+                        f"Anno##{f_id}", options=anni_disponibili, 
+                        index=idx_anno, label_visibility="collapsed", key=f"val_anno_{f_id}"
                     )
                     filtro["valore"] = str(anno_scelto)
                 else:
@@ -132,13 +198,14 @@ def render_db_navigator(conn):
                         except Exception:
                             pass
                     data_scelta = st.date_input(
-                        f"Data##{i}", value=val_init_date, 
-                        label_visibility="collapsed", key=f"val_data_{i}"
+                        f"Data##{f_id}", value=val_init_date, 
+                        label_visibility="collapsed", key=f"val_data_{f_id}"
                     )
                     filtro["valore"] = data_scelta.strftime("%Y-%m-%d")
             
         with col_f4:
-            if st.button("🗑️", key=f"del_{i}", help="Rimuovi questo filtro"):
+            st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
+            if st.button("🗑️", key=f"del_{f_id}", help="Rimuovi questo filtro"):
                 indici_da_rimuovere.append(i)
 
         val_safe = str(filtro["valore"]).replace("'", "''").strip()
@@ -166,7 +233,7 @@ def render_db_navigator(conn):
             elif tipo_dato == "DATE":
                 campo_sql_safe = costruisci_campo_data_safe(col)
                 
-                if filtro.get("tipo_data") == "Solo Anno":
+                if filtro.get("tipo_data", "Solo Anno") == "Solo Anno":
                     campo_anno = f"YEAR({campo_sql_safe})"
                     if op == "Uguale a": clausole_where.append(f"{campo_anno} = {val_safe}")
                     elif op == "Diverso da": clausole_where.append(f"{campo_anno} <> {val_safe}")
