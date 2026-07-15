@@ -3,20 +3,76 @@ import pandas as pd
 import datetime
 import copy  # Necessario per clonare lo stato dei filtri senza riferimenti condivisi
 
-def carica_metadati_db(conn):
-    """Recupera le colonne e mappa i filtri corretti, forzando la gestione data se il nome lo suggerisce"""
-    info = conn.execute("PRAGMA table_info(vista_polizze)").df()
+def is_date_column_by_sampling(conn, col_name):
+    """
+    Ispeziona un campione di dati reali lato database per capire 
+    se la colonna contiene date in qualsiasi formato (italiano, ISO, ecc.)
+    """
+    try:
+        # 1. Preleviamo un campione veloce di 15 righe non vuote e non nulle
+        query = f"""
+            SELECT "{col_name}" 
+            FROM vista_polizze 
+            WHERE "{col_name}" IS NOT NULL 
+              AND CAST("{col_name}" AS VARCHAR) != '' 
+            LIMIT 15
+        """
+        df_sample = conn.execute(query).df()
+        if df_sample.empty:
+            return False
+        
+        # Puliamo i valori trasformandoli in stringhe senza spazi bianchi ai lati
+        valori = df_sample[col_name].astype(str).str.strip()
+        totale = len(valori)
+        
+        # 2. CINTURA DI SICUREZZA: Se la colonna contiene numeri interi puri (es. "1002345"),
+        # Pandas potrebbe erroneamente interpretarli come timestamp unix. Li escludiamo subito.
+        numeri_puri = valori.str.match(r'^\d+$').sum()
+        if (numeri_puri / totale) > 0.3:  # Se più del 30% del campione sono numeri puri, non è una data
+            return False
+            
+        # 3. PARSING FLESSIBILE: Pandas proverà a indovinare qualsiasi formato di data.
+        # 'dayfirst=True' è fondamentale per i formati italiani tipo DD/MM/YYYY.
+        # 'errors=coerce' trasforma i fallimenti di conversione in NaT (Not a Time).
+        date_convertite = pd.to_datetime(valori, errors='coerce', dayfirst=True)
+        valide = date_convertite.notna().sum()
+        
+        # 4. DECISIONE: Se almeno il 70% del campione non vuoto è una data valida, la promuoviamo a DATE
+        return (valide / totale) >= 0.7
+        
+    except Exception:
+        # In caso di errore imprevisto, restituiamo False per sicurezza
+        return False
+
+
+@st.cache_data(ttl=600)  # Ottimo tenere in cache per 10 minuti: l'ispezione avviene una sola volta
+def carica_metadati_db(_conn):
+    """
+    Analizza la struttura del DB e ispeziona empiricamente i dati 
+    per mappare correttamente colonne Numeriche, Date e Testo.
+    """
+    info = _conn.execute("PRAGMA table_info(vista_polizze)").df()
     mappa_tipi = {}
+    
     for _, row in info.iterrows():
         col_name = str(row['name'])
         tipo_sql = str(row['type']).upper()
         
+        # 1. Controllo dei tipi numerici dichiarati nel DB
         if any(x in tipo_sql for x in ["INT", "DOUBLE", "FLOAT", "DECIMAL", "NUMERIC", "REAL"]):
             mappa_tipi[col_name] = "NUMERIC"
-        elif any(x in tipo_sql for x in ["DATE", "TIME", "TIMESTAMP"]) or any(x in col_name.upper() for x in ["DATA", "DECORRENZA", "SCADENZA", "PERIODO"]):
+            
+        # 2. Controllo dei tipi temporali nativi dichiarati nel DB
+        elif any(x in tipo_sql for x in ["DATE", "TIME", "TIMESTAMP"]):
             mappa_tipi[col_name] = "DATE"
+            
+        # 3. Per tutte le colonne TEXT/VARCHAR, andiamo a ispezionare il contenuto reale
         else:
-            mappa_tipi[col_name] = "TEXT"
+            if is_date_column_by_sampling(_conn, col_name):
+                mappa_tipi[col_name] = "DATE"
+            else:
+                mappa_tipi[col_name] = "TEXT"
+                
     return mappa_tipi
 
 def costruisci_campo_data_safe(colonna):
