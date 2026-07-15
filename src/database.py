@@ -10,26 +10,23 @@ def ottieni_connessione():
 
 def inizializza_database_in_ram(buffer):
     """
-    Prende il buffer decifrato, lo indicizza in DuckDB e salva 
-    la connessione nello session_state per renderla persistente.
+    Prende il buffer decifrato e sfrutta il pattern Zero-Copy di Arrow e DuckDB.
     """
-    # Se la connessione esiste già, non fare nulla e restituisci quella attiva
     if "db_conn" in st.session_state and st.session_state["db_conn"] is not None:
         return st.session_state["db_conn"]
         
     try:
-        # 1. Crea il motore DuckDB isolato in memoria RAM
         conn = duckdb.connect(database=':memory:')
-        
-        # 2. Legge i dati tramite PyArrow
         buffer.seek(0)
+        
+        # 1. Legge i dati tramite PyArrow tenendoli in RAM
         tabella_arrow = pq.read_table(buffer)
         
-        # 3. Registra e materializza la tabella in SQL
-        conn.register("vista_polizze_ram", tabella_arrow)
-        conn.execute("CREATE TABLE vista_polizze AS SELECT * FROM vista_polizze_ram")
+        # --- OTTIMIZZAZIONE 2: ZERO-COPY ARCHITECTURE ---
+        # Registra la tabella Arrow direttamente nel motore SQL con il nome finale.
+        # Eliminata la "CREATE TABLE AS SELECT..." che duplicava l'intero database in RAM.
+        conn.register("vista_polizze", tabella_arrow)
         
-        # 4. Salva la connessione nello stato globale della sessione Streamlit
         st.session_state["db_conn"] = conn
         return conn
         

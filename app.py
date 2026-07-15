@@ -29,29 +29,20 @@ st.set_page_config(
     page_icon=":material/analytics:"
 )
 
-# --- CSS PERSONALIZZATO ISTITUZIONALE (PULITO) ---
+# --- CSS PERSONALIZZATO ISTITUZIONALE ---
 st.markdown("""
     <style>
-    /* Sfondo generale */
     .main { background-color: #F8F9FA; }
-    
-    /* Card personalizzate */
     .hdi-card {
-    background-color: white;
-    padding: 18px 24px; /* Leggermente più compatto */
-    border-radius: 8px;
-    border: 1px solid #E5E7EB; /* Bordo grigio sottilissimo */
-    border-left: 3px solid #007A33; /* Linea verticale d'accento più elegante e sottile */
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); /* Ombra ultra-leggera e moderna */
-    margin-bottom: 20px;
+        background-color: white;
+        padding: 18px 24px; 
+        border-radius: 8px;
+        border: 1px solid #E5E7EB; 
+        border-left: 3px solid #007A33; 
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); 
+        margin-bottom: 20px;
     }
-    
-    /* Uniformazione bottoni primari verdi */
-    .stButton>button { border-radius: 5px; height: 3em; transition: all 0.3s; }
-    div.stButton > button:first-child { background-color: #007A33 !important; color: white !important; border: none !important; }
-    div.stButton > button:first-child:hover { background-color: #005F26 !important; color: white !important; }
-    
-    /* Layout Logo Sidebar */
+    /* Stile Tab base protetto da regole globali */
     [data-testid="stSidebar"] img { border-radius: 0px !important; }
     [data-testid="stSidebar"] [data-testid="stImage"] { padding: 10px 0px !important; }
     </style>
@@ -61,7 +52,7 @@ st.markdown("""
 with st.sidebar:
     path_logo = get_resource_path("logo_hdi.png")
     if os.path.exists(path_logo):
-        st.image(Image.open(path_logo), width="stretch")
+        st.image(Image.open(path_logo), use_container_width=True)
     st.markdown("### ⚙️ Area Riservata")
     st.divider()
 
@@ -74,33 +65,45 @@ if file_trovati:
 else:
     FILE_CIFRATO = "DB_GIORGIO_NON_TROVATO.parquet.enc"
 
-
+# --- OTTIMIZZAZIONE 1: DECRYPTION IN STREAMING CHUNKS ---
 def decifra_parquet_in_memoria(file_path: str, password: str):
-    """Decifra il file ed effettua l'unpadding PKCS7 in memoria RAM."""
+    """Decifra il file a blocchi (chunking) per salvare RAM in ambiente Cloud."""
     if not os.path.exists(file_path):
         raise FileNotFoundError(f"Il file '{file_path}' non è stato trovato sul disco.")
         
     password_pulita = password.strip()
     chiave = hashlib.sha256(password_pulita.encode('utf-8')).digest()
     
+    out_buffer = io.BytesIO()
+    
     with open(file_path, "rb") as f:
-        dati_cifrati = f.read()
+        iv = f.read(16)
+        if len(iv) < 16:
+            raise ValueError("Il file cifrato ha una dimensione inferiore ai 16 byte minimi dell'IV.")
+            
+        cipher = Cipher(algorithms.AES(chiave), modes.CBC(iv))
+        decryptor = cipher.decryptor()
+        unpadder = padding.PKCS7(128).unpadder()
         
-    if len(dati_cifrati) < 16:
-        raise ValueError("Il file cifrato ha una dimensione inferiore ai 16 byte minimi dell'IV.")
-        
-    iv = dati_cifrati[:16]
-    payload_cifrato = dati_cifrati[16:]
+        # Legge il file in blocchi da 64KB invece di ingoiarlo tutto in RAM
+        chunk_size = 64 * 1024
+        while True:
+            chunk = f.read(chunk_size)
+            if not chunk:
+                break
+            decrypted_chunk = decryptor.update(chunk)
+            if decrypted_chunk:
+                out_buffer.write(unpadder.update(decrypted_chunk))
+                
+        # Finalizzazione crittografica
+        final_decrypted = decryptor.finalize()
+        if final_decrypted:
+            out_buffer.write(unpadder.update(final_decrypted))
+            
+        out_buffer.write(unpadder.finalize())
     
-    cipher = Cipher(algorithms.AES(chiave), modes.CBC(iv))
-    decryptor = cipher.decryptor()
-    dati_decifrati = decryptor.update(payload_cifrato) + decryptor.finalize()
-    
-    # --- RIGHE CORRETTE ---
-    unpadder = padding.PKCS7(128).unpadder()
-    dati_puliti = unpadder.update(dati_decifrati) + unpadder.finalize()
-    
-    return io.BytesIO(dati_puliti)
+    out_buffer.seek(0)
+    return out_buffer
 
 
 # --- INIZIALIZZAZIONE DELLO STATO DELLA SESSIONE ---
@@ -122,17 +125,19 @@ if not st.session_state["sbloccato"]:
     with col2:
         st.markdown('<div class="hdi-card"><h4>Autenticazione Richiesta</h4>', unsafe_allow_html=True)
         password_input = st.text_input("Password di Decifratura dei Dati", type="password")
-        pulsante_sblocco = st.button("Sblocca e Carica Dati", width="stretch")
+        pulsante_sblocco = st.button("Sblocca e Carica Dati", use_container_width=True)
         st.markdown('</div>', unsafe_allow_html=True)
         
         if pulsante_sblocco and password_input:
-            with st.spinner("Decifratura e verifica del database in corso..."):
+            with st.spinner("Decifratura e materializzazione in RAM in corso..."):
                 try:
                     buffer = decifra_parquet_in_memoria(FILE_CIFRATO, password_input)
-                    buffer.seek(0)
-                    tabella_test = pq.read_table(buffer)
-                    inizializza_database_in_ram(buffer)
                     
+                    # Eliminato il doppio test inutile di PyArrow. Delegato direttamente a database.py
+                    conn = inizializza_database_in_ram(buffer)
+                    if conn is None:
+                        raise ValueError("Impossibile generare la tabella in memoria.")
+                        
                     st.session_state["sbloccato"] = True
                     st.session_state["buffer_dati"] = buffer
                     st.success("🔓 Dati decifrati e strutturati in RAM con successo!")
@@ -158,7 +163,7 @@ if not st.session_state["sbloccato"]:
 else:
     with st.sidebar:
         st.sidebar.markdown("**Sessione Attiva**")
-        if st.sidebar.button("🔒 Chiudi Sessione (Cancella RAM)", width="stretch"):
+        if st.sidebar.button("🔒 Chiudi Sessione (Cancella RAM)", use_container_width=True):
             if st.session_state["db_conn"]:
                 try: st.session_state["db_conn"].close()
                 except: pass
