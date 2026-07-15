@@ -39,6 +39,16 @@ def ottieni_anni_univoci(colonna, _conn):
     except Exception:
         return [2026, 2025, 2024, 2023, 2022, 2021, 2020]
 
+# --- NUOVA FUNZIONE DI SICUREZZA ---
+@st.cache_data(ttl=300)
+def ottieni_conteggio_univoci(colonna, _conn):
+    """Esegue un conteggio super veloce della cardinalità della colonna lato database"""
+    try:
+        query = f'SELECT COUNT(DISTINCT "{colonna}") FROM vista_polizze'
+        return int(_conn.execute(query).fetchone()[0])
+    except Exception:
+        return 999999  # Nel dubbio, blocca la tendina e attiva la scrittura manuale
+
 @st.cache_data(ttl=300)
 def ottieni_modalita_uniche(colonna, _conn):
     """Estrae in modo sicuro le modalità uniche per le colonne di tipo TEXT"""
@@ -157,22 +167,36 @@ def render_db_navigator(conn):
         with col_f3:
             if tipo_dato == "TEXT":
                 if filtro["operatore"] in ["Uguale a", "Diverso da"]:
-                    modalita_disponibili = ottieni_modalita_uniche(filtro["colonna"], conn)
-                    if modalita_disponibili:
-                        val_attuale = str(filtro["valore"])
-                        idx_val = modalita_disponibili.index(val_attuale) if val_attuale in modalita_disponibili else 0
-                        
-                        valore_scelto = st.selectbox(
-                            f"Valore##{f_id}", options=modalita_disponibili,
-                            index=idx_val, label_visibility="collapsed", key=f"val_txt_{f_id}"
-                        )
-                        filtro["valore"] = valore_scelto
+                    # --- IMPLEMENTAZIONE IDEA 3: IBRIDAZIONE INTELLIGENTE ---
+                    SOGLIA_CARDINALITA = 150
+                    conteggio_unici = ottieni_conteggio_univoci(filtro["colonna"], conn)
+                    
+                    if conteggio_unici <= SOGLIA_CARDINALITA:
+                        # Bassa cardinalità -> Mostriamo la comoda Selectbox
+                        modalita_disponibili = ottieni_modalita_uniche(filtro["colonna"], conn)
+                        if modalita_disponibili:
+                            val_attuale = str(filtro["valore"])
+                            idx_val = modalita_disponibili.index(val_attuale) if val_attuale in modalita_disponibili else 0
+                            
+                            valore_scelto = st.selectbox(
+                                f"Valore##{f_id}", options=modalita_disponibili,
+                                index=idx_val, label_visibility="collapsed", key=f"val_txt_{f_id}"
+                            )
+                            filtro["valore"] = valore_scelto
+                        else:
+                            filtro["valore"] = st.text_input(
+                                f"Valore##{f_id}", value="", 
+                                placeholder="Nessun dato presente...", label_visibility="collapsed", key=f"val_txt_vuoto_{f_id}", disabled=True
+                            )
                     else:
+                        # Alta cardinalità -> Scrittura a mano obbligatoria per salvare le prestazioni
                         filtro["valore"] = st.text_input(
-                            f"Valore##{f_id}", value="", 
-                            placeholder="Nessun dato presente...", label_visibility="collapsed", key=f"val_txt_vuoto_{f_id}", disabled=True
+                            f"Valore##{f_id}", value=str(filtro["valore"]), 
+                            placeholder="Digita valore esatto...", label_visibility="collapsed", key=f"val_txt_input_{f_id}"
                         )
+                        st.caption(f"⚡ Alta cardinalità ({conteggio_unici:,} valori). Input manuale attivo.")
                 else:
+                    # Per operatori come "Contiene" o "Inizia con" l'input testuale è già il default ideale
                     filtro["valore"] = st.text_input(
                         f"Valore##{f_id}", value=str(filtro["valore"]), 
                         placeholder="Inserisci pattern...", label_visibility="collapsed", key=f"val_txt_input_{f_id}"
@@ -227,7 +251,6 @@ def render_db_navigator(conn):
     col_applica, col_stato = st.columns([1, 2])
     
     with col_applica:
-        # Il bottone diventa visivamente prioritario se ci sono modifiche pendenti
         bottone_tipo = "primary" if ha_modifiche_pendenti else "secondary"
         if st.button("⚡ Applica Filtri", type=bottone_tipo, use_container_width=True):
             st.session_state["lista_filtri_applicati"] = copy.deepcopy(st.session_state["lista_filtri"])
@@ -302,7 +325,7 @@ def render_db_navigator(conn):
     st.markdown('<div class="hdi-card"><h3>👀 Preview e Download</h3></div>', unsafe_allow_html=True)
     if totale_righe > 0:
         
-        # --- GENERAZIONE BADGES (Usa lista_filtri_applicati) ---
+        # --- GENERAZIONE BADGES ---
         lista_badges = []
         for f in st.session_state["lista_filtri_applicati"]:
             valore_filtro = f.get("valore", "").strip()
@@ -364,7 +387,6 @@ def render_db_navigator(conn):
         query_anteprima = f"SELECT * FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
         df_preview = conn.execute(query_anteprima).df()
         
-        # Format decimali e highlight
         colonne_float = df_preview.select_dtypes(include=['float64', 'float32']).columns.tolist()
         df_visualizzazione = df_preview.style
         
