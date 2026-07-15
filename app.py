@@ -37,12 +37,13 @@ st.markdown("""
     
     /* Card personalizzate */
     .hdi-card {
-        background-color: white;
-        padding: 22px;
-        border-radius: 10px;
-        border-left: 5px solid #007A33;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-        margin-bottom: 20px;
+    background-color: white;
+    padding: 18px 24px; /* Leggermente più compatto */
+    border-radius: 8px;
+    border: 1px solid #E5E7EB; /* Bordo grigio sottilissimo */
+    border-left: 3px solid #007A33; /* Linea verticale d'accento più elegante e sottile */
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05); /* Ombra ultra-leggera e moderna */
+    margin-bottom: 20px;
     }
     
     /* Uniformazione bottoni primari verdi */

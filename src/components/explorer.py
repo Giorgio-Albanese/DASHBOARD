@@ -134,11 +134,12 @@ def render_db_navigator(conn):
     # =========================================================================
     # 1. CONFIGURAZIONE FILTRI (Stile .hdi-card)
     # =========================================================================
-    st.markdown('<div class="hdi-card"><h3>🎛️ Filtri</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hdi-card"><h3>🎛️ Filtri di Estrazione</h3></div>', unsafe_allow_html=True)
     
+    # Allineamento Orizzontale dei pulsanti di controllo con gerarchia visiva chiara
     col_pulsanti_top_1, col_pulsanti_top_2 = st.columns([1, 1])
     with col_pulsanti_top_1:
-        if st.button("➕ Aggiungi un nuovo filtro", width="stretch"):
+        if st.button("➕ Aggiungi un nuovo filtro", type="primary", use_container_width=True):
             st.session_state["filtro_id_counter"] += 1
             st.session_state["lista_filtri"].append({
                 "id": st.session_state["filtro_id_counter"],
@@ -150,7 +151,7 @@ def render_db_navigator(conn):
             st.rerun()
             
     with col_pulsanti_top_2:
-        if st.button("🗑️ Rimuovi tutti i filtri", width="stretch"):
+        if st.button("🗑️ Rimuovi tutti i filtri", type="secondary", use_container_width=True):
             st.session_state["lista_filtri"] = []
             st.session_state["lista_filtri_applicati"] = []
             st.session_state["step_righe"] = 10
@@ -158,35 +159,49 @@ def render_db_navigator(conn):
 
     indici_da_rimuovere = []
     
+    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
     # Rendering dei filtri basato su lista_filtri (modificabili liberamente)
     for i, filtro in enumerate(st.session_state["lista_filtri"]):
         f_id = filtro["id"]
-        col_f1, col_f2, col_f3, col_f4 = st.columns([3, 2, 4, 1])
+        col_f1, col_f2, col_f3, col_f4 = st.columns([4, 2, 4, 1])
         
         with col_f1:
+            tipo_dato = metadati[filtro["colonna"]]
             colonna_precedente = filtro["colonna"]
-            filtro["colonna"] = st.selectbox(
-                f"Colonna##{f_id}", elenco_colonne, 
-                index=elenco_colonne.index(filtro["colonna"]), 
-                label_visibility="collapsed", key=f"col_{f_id}"
-            )
             
+            # Allineamento rigido orizzontale: se è di tipo data, affianca la selezione in micro-colonne
+            if tipo_dato == "DATE":
+                sub_col1, sub_col2 = st.columns([1, 1])
+                with sub_col1:
+                    filtro["colonna"] = st.selectbox(
+                        f"Colonna##{f_id}", elenco_colonne, 
+                        index=elenco_colonne.index(filtro["colonna"]), 
+                        label_visibility="collapsed", key=f"col_{f_id}"
+                    )
+                with sub_col2:
+                    filtro["tipo_data"] = st.selectbox(
+                        f"TipoData##{f_id}", ["Solo Anno", "Data Intera"],
+                        index=0 if filtro.get("tipo_data", "Solo Anno") == "Solo Anno" else 1,
+                        key=f"tg_{f_id}",
+                        label_visibility="collapsed"
+                    )
+            else:
+                filtro["colonna"] = st.selectbox(
+                    f"Colonna##{f_id}", elenco_colonne, 
+                    index=elenco_colonne.index(filtro["colonna"]), 
+                    label_visibility="collapsed", key=f"col_{f_id}"
+                )
+            
+            # Reset automatico se l'utente cambia colonna
             if filtro["colonna"] != colonna_precedente:
                 filtro["valore"] = ""
                 tipo_nuovo = metadati[filtro["colonna"]]
                 if tipo_nuovo == "DATE":
                     filtro["tipo_data"] = "Solo Anno"
                 st.rerun()
-            
-            tipo_dato = metadati[filtro["colonna"]]
-            if tipo_dato == "DATE":
-                filtro["tipo_data"] = st.selectbox(
-                    f"TipoData##{f_id}", ["Solo Anno", "Data Intera"],
-                    index=0 if filtro.get("tipo_data", "Solo Anno") == "Solo Anno" else 1,
-                    key=f"tg_{f_id}",
-                    label_visibility="collapsed"
-                )
         
+        # Scelta dinamica dell'operatore in base al tipo di dato reale
         if tipo_dato == "TEXT":
             opzioni_operatori = ["Uguale a", "Diverso da", "Contiene", "Inizia con", "Incluso in (lista, sep. da virgola)"]
         elif tipo_dato == "NUMERIC":
@@ -218,12 +233,11 @@ def render_db_navigator(conn):
         with col_f3:
             if tipo_dato == "TEXT":
                 if filtro["operatore"] in ["Uguale a", "Diverso da"]:
-                    # --- IMPLEMENTAZIONE IDEA 3: IBRIDAZIONE INTELLIGENTE ---
+                    # Ibridazione intelligente: controlla la cardinalità per non appesantire il rendering
                     SOGLIA_CARDINALITA = 150
                     conteggio_unici = ottieni_conteggio_univoci(filtro["colonna"], conn)
                     
                     if conteggio_unici <= SOGLIA_CARDINALITA:
-                        # Bassa cardinalità -> Mostriamo la comoda Selectbox
                         modalita_disponibili = ottieni_modalita_uniche(filtro["colonna"], conn)
                         if modalita_disponibili:
                             val_attuale = str(filtro["valore"])
@@ -237,17 +251,15 @@ def render_db_navigator(conn):
                         else:
                             filtro["valore"] = st.text_input(
                                 f"Valore##{f_id}", value="", 
-                                placeholder="Nessun dato presente...", label_visibility="collapsed", key=f"val_txt_vuoto_{f_id}", disabled=True
+                                placeholder="Nessun dato...", label_visibility="collapsed", key=f"val_txt_vuoto_{f_id}", disabled=True
                             )
                     else:
-                        # Alta cardinalità -> Scrittura a mano obbligatoria per salvare le prestazioni
                         filtro["valore"] = st.text_input(
                             f"Valore##{f_id}", value=str(filtro["valore"]), 
                             placeholder="Digita valore esatto...", label_visibility="collapsed", key=f"val_txt_input_{f_id}"
                         )
                         st.caption(f"⚡ Alta cardinalità ({conteggio_unici:,} valori). Input manuale attivo.")
                 else:
-                    # Per operatori come "Contiene" o "Inizia con" l'input testuale è già il default ideale
                     filtro["valore"] = st.text_input(
                         f"Valore##{f_id}", value=str(filtro["valore"]), 
                         placeholder="Inserisci pattern...", label_visibility="collapsed", key=f"val_txt_input_{f_id}"
@@ -256,7 +268,7 @@ def render_db_navigator(conn):
             elif tipo_dato == "NUMERIC":
                 filtro["valore"] = st.text_input(
                     f"Valore##{f_id}", value=str(filtro["valore"]), 
-                    placeholder="Inserisci valore numerico...", label_visibility="collapsed", key=f"val_num_{f_id}"
+                    placeholder="Valore numerico...", label_visibility="collapsed", key=f"val_num_{f_id}"
                 )
             elif tipo_dato == "DATE":
                 if filtro.get("tipo_data", "Solo Anno") == "Solo Anno":
@@ -286,8 +298,8 @@ def render_db_navigator(conn):
                     filtro["valore"] = data_scelta.strftime("%Y-%m-%d")
             
         with col_f4:
-            st.markdown("<div style='height: 4px;'></div>", unsafe_allow_html=True)
-            if st.button("🗑️", key=f"del_{f_id}", help="Rimuovi questo filtro"):
+            # Allineamento simmetrico del pulsante rimuovi riga
+            if st.button("🗑️", key=f"del_{f_id}", help="Rimuovi questo filtro", type="secondary", use_container_width=True):
                 indici_da_rimuovere.append(i)
 
     if indici_da_rimuovere:
@@ -295,7 +307,7 @@ def render_db_navigator(conn):
             st.session_state["lista_filtri"].pop(idx)
         st.rerun()
 
-    # --- CONTROLLO APPLICAZIONE FILTRI ---
+    # --- CONTROLLO STATO APPLICAZIONE FILTRI ---
     ha_modifiche_pendenti = (st.session_state["lista_filtri"] != st.session_state["lista_filtri_applicati"])
     
     st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
@@ -303,7 +315,7 @@ def render_db_navigator(conn):
     
     with col_applica:
         bottone_tipo = "primary" if ha_modifiche_pendenti else "secondary"
-        if st.button("⚡ Applica Filtri", type=bottone_tipo, width="stretch"):
+        if st.button("⚡ Applica Filtri", type=bottone_tipo, use_container_width=True):
             st.session_state["lista_filtri_applicati"] = copy.deepcopy(st.session_state["lista_filtri"])
             st.rerun()
             
@@ -314,7 +326,7 @@ def render_db_navigator(conn):
             st.success("✅ Filtri sincronizzati con il database.")
 
     # =========================================================================
-    # 2. COSTRUZIONE DELLE CLAUSOLE SQL (Strictly basato su lista_filtri_applicati)
+    # 2. COSTRUZIONE DELLE CLAUSOLE SQL (Sincronizzate su lista_filtri_applicati)
     # =========================================================================
     clausole_where = []
     colonne_attive_filtrate = []
@@ -376,7 +388,7 @@ def render_db_navigator(conn):
     st.markdown('<div class="hdi-card"><h3>👀 Preview e Download</h3></div>', unsafe_allow_html=True)
     if totale_righe > 0:
         
-        # --- GENERAZIONE BADGES ---
+        # Generazione dei Badge dei filtri con lo stile "pillola pastello"
         lista_badges = []
         for f in st.session_state["lista_filtri_applicati"]:
             valore_filtro = f.get("valore", "").strip()
@@ -395,23 +407,24 @@ def render_db_navigator(conn):
                     
                 html_badge = f"""
                 <span style="
-                    background-color: #FFFFFF; 
-                    color: #007A33; 
-                    padding: 4px 10px; 
-                    border-radius: 8px; 
+                    background-color: #E6F2EB; 
+                    color: #005F26; 
+                    padding: 6px 14px; 
+                    border-radius: 20px; 
                     font-size: 0.8rem; 
                     font-weight: 600;
-                    margin-right: 6px; 
-                    display: inline-block; 
-                    margin-bottom: 6px;
-                    border: 1px solid #007A33;
+                    border: 1px solid #C2E0CC;
                 ">{testo_badge}</span>
                 """
                 lista_badges.append(html_badge)
         
         if lista_badges:
             st.markdown("**Filtri applicati correnti:**")
-            st.markdown("".join(lista_badges), unsafe_allow_html=True)
+            # Impacchettamento dei badge in un flex-container per avvolgimento automatico
+            st.markdown(
+                f'<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px;">{"".join(lista_badges)}</div>', 
+                unsafe_allow_html=True
+            )
 
         col_info_view, col_dl = st.columns([3, 1])
         with col_info_view:
@@ -432,7 +445,7 @@ def render_db_navigator(conn):
                 data=csv_data,
                 file_name="estrazione_filtrata_completa.csv",
                 mime="text/csv",
-                width="stretch"
+                use_container_width=True
             )
 
         query_anteprima = f"SELECT * FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
@@ -445,18 +458,19 @@ def render_db_navigator(conn):
             fmt_dict = {col: lambda x: f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-" for col in colonne_float}
             df_visualizzazione = df_visualizzazione.format(fmt_dict)
         
+        # Evidenziazione discreta HDI Green sulle colonne filtrate per migliorare l'orientamento cognitivo
         def applica_evidenziatore(colonna_dati):
             if colonna_dati.name in colonne_attive_filtrate:
-                return ['background-color: rgba(0, 122, 51, 0.08)'] * len(colonna_dati)
+                return ['background-color: rgba(0, 122, 51, 0.05)'] * len(colonna_dati)
             return [''] * len(colonna_dati)
 
         if len(colonne_attive_filtrate) > 0 and not df_preview.empty:
             df_visualizzazione = df_visualizzazione.apply(applica_evidenziatore, axis=0)
 
-        st.dataframe(df_visualizzazione, width="stretch")
+        st.dataframe(df_visualizzazione, use_container_width=True)
         
         if st.session_state["step_righe"] < totale_righe:
-            if st.button("🔽 Mostra altre 10 righe", width="stretch"):
+            if st.button("🔽 Mostra altre 10 righe", use_container_width=True):
                 st.session_state["step_righe"] += 10
                 st.rerun()
     else:
@@ -465,7 +479,7 @@ def render_db_navigator(conn):
     # =========================================================================
     # 4. REPORT TABELLARE DI SINTESI
     # =========================================================================
-    st.markdown('<div class="hdi-card"><h3>📈 Statistiche di sintesi</h3></div>', unsafe_allow_html=True)
+    st.markdown('<div class="hdi-card"><h3>📈 Statistiche di Sintesi</h3></div>', unsafe_allow_html=True)
     if totale_righe == 0:
         st.warning("Nessun dato disponibile con i filtri correnti.")
     elif not colonne_numeriche:
@@ -496,10 +510,16 @@ def render_db_navigator(conn):
                 df_stats = conn.execute(query_pivot_completa).df()
                 df_stats_formatted = df_stats.copy()
                 
-                for metric_col in ['SOMMA', 'MEDIA', 'MASSIMO', 'MINIMO']:
-                    df_stats_formatted[metric_col] = df_stats_formatted[metric_col].apply(
-                        lambda x: f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-"
-                    )
-                st.dataframe(df_stats_formatted, width="stretch", hide_index=True)
+                for metric_col in ['SUM', 'AVG', 'MAX', 'MIN']:
+                    # Manteniamo la compatibilità se i nomi delle colonne SQL cambiano case
+                    col_key = metric_col if metric_col in df_stats_formatted.columns else metric_col.lower()
+                    if col_key in df_stats_formatted.columns:
+                        df_stats_formatted[col_key] = df_stats_formatted[col_key].apply(
+                            lambda x: f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-"
+                        )
+                
+                # Rinominiamo le colonne per l'output finale
+                df_stats_formatted.columns = ["Variabile Finanziaria", "SOMMA", "MEDIA", "MASSIMO", "MINIMO"]
+                st.dataframe(df_stats_formatted, use_container_width=True, hide_index=True)
             except Exception as e:
                 st.error(f"Errore durante il calcolo del report: {e}")
