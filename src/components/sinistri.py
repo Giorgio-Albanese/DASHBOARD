@@ -95,14 +95,16 @@ def render_analisi_sinistri(conn):
     else:
         cond_bench = f"YEAR({data_eff_safe}) = {gen_target} AND COALESCE(CONTRAENTE, 'SCONOSCIUTO') != '{contr_target_safe}'"
 
+    label_bench_sql = label_bench.replace("'", "''")
+
     # --- ESECUZIONE QUERY SVILUPPO LOSS RATIO ---
     with st.spinner("Calcolo triangolazione e Loss Ratio in corso..."):
         query_sviluppo = f"""
         WITH TargetData AS (
             SELECT 
-                'Target' AS Gruppo_Cod,
+                'Target' AS Gruppo,
                 UPPER(CAST(RAMO AS VARCHAR)) AS Ramo,
-                NUMEROPOLIZZA,
+                ID,
                 CAST(COALESCE(PREMI_NETTO, 0) AS DOUBLE) AS Premio_Netto,
                 CAST(COALESCE(LIQUIDAZIONI, 0) AS DOUBLE) AS Liquidazione,
                 YEAR({data_liq_safe}) - YEAR({data_eff_safe}) AS t_sviluppo,
@@ -112,9 +114,9 @@ def render_analisi_sinistri(conn):
         ),
         BenchData AS (
             SELECT 
-                'Benchmark' AS Gruppo_Cod,
+                '{label_bench_sql}' AS Gruppo,
                 UPPER(CAST(RAMO AS VARCHAR)) AS Ramo,
-                NUMEROPOLIZZA,
+                ID,
                 CAST(COALESCE(PREMI_NETTO, 0) AS DOUBLE) AS Premio_Netto,
                 CAST(COALESCE(LIQUIDAZIONI, 0) AS DOUBLE) AS Liquidazione,
                 YEAR({data_liq_safe}) - YEAR({data_eff_safe}) AS t_sviluppo,
@@ -128,32 +130,32 @@ def render_analisi_sinistri(conn):
             SELECT * FROM BenchData
         ),
         Denominatore AS (
-            -- Calcoliamo il premio univoco per polizza (evita inflazione se ci sono più righe sinistro per polizza)
+            -- Calcoliamo il premio univoco per polizza (evita inflazione se ci sono più righe sinistro per lo stesso ID)
             SELECT 
-                Gruppo_Cod, Ramo,
+                Gruppo, Ramo,
                 SUM(Premio_Netto_Univoco) AS Tot_Premio_Netto
             FROM (
-                SELECT Gruppo_Cod, Ramo, NUMEROPOLIZZA, MAX(Premio_Netto) AS Premio_Netto_Univoco
+                SELECT Gruppo, Ramo, ID, MAX(Premio_Netto) AS Premio_Netto_Univoco
                 FROM CombinedData
-                GROUP BY Gruppo_Cod, Ramo, NUMEROPOLIZZA
+                GROUP BY Gruppo, Ramo, ID
             ) sub
-            GROUP BY Gruppo_Cod, Ramo
+            GROUP BY Gruppo, Ramo
         ),
         Numeratore AS (
             -- Calcoliamo il totale liquidato all'anno t
             SELECT 
-                Gruppo_Cod, Ramo, t_sviluppo,
+                Gruppo, Ramo, t_sviluppo,
                 SUM(Liquidazione) AS Liquidato_t
             FROM CombinedData
             WHERE DATALIQUIDAZIONE IS NOT NULL 
               AND t_sviluppo >= 0 AND t_sviluppo <= 10
-            GROUP BY Gruppo_Cod, Ramo, t_sviluppo
+            GROUP BY Gruppo, Ramo, t_sviluppo
         )
         SELECT 
-            d.Gruppo_Cod, d.Ramo, d.Tot_Premio_Netto,
+            d.Gruppo, d.Ramo, d.Tot_Premio_Netto,
             n.t_sviluppo, COALESCE(n.Liquidato_t, 0) AS Liquidato_t
         FROM Denominatore d
-        LEFT JOIN Numeratore n ON d.Gruppo_Cod = n.Gruppo_Cod AND d.Ramo = n.Ramo
+        LEFT JOIN Numeratore n ON d.Gruppo = n.Gruppo AND d.Ramo = n.Ramo
         """
         
         try:
@@ -163,23 +165,19 @@ def render_analisi_sinistri(conn):
                 st.info("Nessun dato trovato per le coorti selezionate.")
                 return
 
-            # Mappiamo i Gruppi_Cod interni (Target/Benchmark) ai nomi visivi (Target/label_bench) scelti dall'utente
-            label_map = {'Target': 'Target', 'Benchmark': label_bench}
-            df_sql['Gruppo'] = df_sql['Gruppo_Cod'].map(label_map)
-
-            # Creazione della griglia fissa per garantire che le linee traccino per t=0...10
-            gruppi_presenti = df_sql['Gruppo'].dropna().unique().tolist()
+            # Creazione della griglia fissa per garantire che le linee traccino da t=0 a t=10 anche per anni vuoti
             grid = pd.MultiIndex.from_product(
-                [gruppi_presenti, ['DANNI', 'VITA'], range(11)],
+                [['Target', label_bench], ['DANNI', 'VITA'], range(11)],
                 names=['Gruppo', 'Ramo', 't_sviluppo']
             ).to_frame(index=False)
 
-            # Merge dei risultati SQL nella griglia
+            # Merge dei risultati SQL nella griglia per colmare i "buchi" temporali (es. nessun sinistro all'anno 2)
             df_full = pd.merge(grid, df_sql, on=['Gruppo', 'Ramo', 't_sviluppo'], how='left').fillna(0)
             
             # Espansione del Denominatore (Tot_Premio_Netto) su tutti i tempi t
             totali = df_sql[['Gruppo', 'Ramo', 'Tot_Premio_Netto']].replace(0, np.nan).dropna().drop_duplicates()
-            df_full = df_full.drop(columns=['Tot_Premio_Netto'], errors='ignore')
+            if 'Tot_Premio_Netto' in df_full.columns:
+                df_full = df_full.drop(columns=['Tot_Premio_Netto'])
             df_full = pd.merge(df_full, totali, on=['Gruppo', 'Ramo'], how='left')
 
             # Ordinamento e calcolo Cumulata del Liquidato
@@ -189,7 +187,7 @@ def render_analisi_sinistri(conn):
             # --- CALCOLO LOSS RATIO % ---
             # Loss Ratio % = (Importo Liquidato Cumulato al tempo t / Premio Netto Totale Emesso) * 100
             df_full['Loss_Ratio'] = (df_full['Cum_Liquidato'] / df_full['Tot_Premio_Netto'].replace(0, np.nan)) * 100
-            df_full['Loss_Ratio'] = df_full['Loss_Ratio'].fillna(0) # Evita NaN per divisioni su 0 premio
+            df_full['Loss_Ratio'] = df_full['Loss_Ratio'].fillna(0) # Evita NaN per divisioni su premio a 0
 
             # Creiamo la Serie Combinata e la Pivotata
             df_full['Serie'] = df_full['Gruppo'] + " - " + df_full['Ramo']
@@ -231,7 +229,7 @@ def render_analisi_sinistri(conn):
                 height=420
             )
 
-            # Il Download nativo in PNG è gestito dalle opzioni 'config' del plotly chart
+            # Il Download nativo in PNG è gestito dalle opzioni 'config' della libreria di rendering Plotly
             st.plotly_chart(
                 fig, 
                 use_container_width=True,
@@ -267,7 +265,7 @@ def render_analisi_sinistri(conn):
                     use_container_width=True
                 )
 
-            # Formattazione per la visualizzazione Streamlit
+            # Formattazione per la visualizzazione all'interno della dashboard Streamlit
             col_config = {
                 col: st.column_config.NumberColumn(col, format="%.2f %%") 
                 for col in df_matrix.columns
