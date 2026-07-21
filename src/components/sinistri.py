@@ -13,22 +13,22 @@ def costruisci_campo_data_safe(colonna):
     ) AS DATE)"""
 
 def render_analisi_sinistri(conn):
-    st.markdown("""
-        <style>
-        .metric-card-sinistri {
-            background-color: white;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #E5E7EB;
-            border-left: 4px solid #C8102E;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-            margin-bottom: 20px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    # st.markdown("""
+    #     <style>
+    #     .metric-card-sinistri {
+    #         background-color: white;
+    #         padding: 15px;
+    #         border-radius: 8px;
+    #         border: 1px solid #E5E7EB;
+    #         border-left: 4px solid #C8102E;
+    #         box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    #         margin-bottom: 20px;
+    #     }
+    #     </style>
+    # """, unsafe_allow_html=True)
 
-    st.markdown("### 🚨 Loss Ratio Cumulato (Claim Velocity)")
-    st.markdown("Analisi dell'incisività dei sinistri: quanto velocemente la coorte sviluppa un **Loss Ratio %** (Importo Liquidato Cumulato / Denominatore Premi del subset) nei primi 10 anni dalla messa in copertura.")
+    st.markdown("### 🚨 Claim Velocity")
+    #st.markdown("Analisi dell'incisività dei sinistri: quanto velocemente la coorte sviluppa un **Loss Ratio %** (Importo Liquidato Cumulato / Denominatore Premi del subset) nei primi 10 anni dalla messa in copertura.")
 
     # --- SETUP FILTRI ED ESTRAZIONE DIMENSIONI ---
     data_eff_safe = costruisci_campo_data_safe("DATAEFFETTO")
@@ -59,16 +59,16 @@ def render_analisi_sinistri(conn):
     
     col_dim_scelta, col_toggle_est = st.columns([2, 2])
     with col_dim_scelta:
-        tipo_analisi = st.radio("Dimensione di Analisi", ["Contraente", "Garanzia"], horizontal=True)
+        tipo_analisi = st.radio("Variabile di stratificazione", ["Contraente", "Garanzia"], horizontal=True)
     with col_toggle_est:
         st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True) # Spaziatura visiva
-        usa_estinzioni = st.toggle("➕ Includi Estinzioni nei Premi (Premi Netto + Estinzioni)")
+        usa_estinzioni = st.toggle("➕ Includi Estinzioni")
 
     col_dim = "CONTRAENTE" if tipo_analisi == "Contraente" else "GARANZIA"
     valori_disp = contraenti_disp if tipo_analisi == "Contraente" else garanzie_disp
 
     st.markdown("---")
-    st.markdown(f"##### 🎯 Configurazione Coorte Target ({tipo_analisi})")
+    st.markdown(f"##### 🎯 Target ({tipo_analisi})")
     
     col1, col2 = st.columns(2)
     with col1:
@@ -76,10 +76,10 @@ def render_analisi_sinistri(conn):
     with col2:
         val_target = st.selectbox(f"{tipo_analisi} Target", valori_disp, key="val_target")
 
-    confronto_attivo = st.toggle("🔄 Confronta con una coorte specifica (anziché con il resto del portafoglio)", key="toggle_confronto")
+    confronto_attivo = st.toggle("🔄 Confronta", key="toggle_confronto")
     
     if confronto_attivo:
-        st.markdown(f"##### ⚖️ Configurazione Coorte di Confronto ({tipo_analisi})")
+        st.markdown(f"##### ⚖️ Confronto ({tipo_analisi})")
         col3, col4 = st.columns(2)
         with col3:
             gen_bench = st.selectbox("Generazione di Confronto", generazioni_disp, index=1 if len(generazioni_disp) > 1 else 0, key="gen_bench")
@@ -225,7 +225,7 @@ def render_analisi_sinistri(conn):
             df_pivot = df_full.pivot(index='t_sviluppo', columns='Serie', values='Loss_Ratio').fillna(0)
 
             # --- 1. GRAFICO PLOTLY CON DOWNLOAD ---
-            st.markdown("#### 📈 Sviluppo Loss Ratio Cumulato (%)")
+            st.markdown("#### 📈 Loss Ratio Cumulato (%)")
 
             color_map = {
                 'Target - DANNI': '#007A33',         # Verde HDI
