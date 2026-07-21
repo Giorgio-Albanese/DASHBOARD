@@ -188,7 +188,8 @@ else:
             render_db_navigator(conn)
             
         with tab_premi:
-            st.subheader("Sezione Premi (In sviluppo)")
+            from src.components.premi import render_analisi_premi
+            render_analisi_premi(conn)
             
         with tab_sinistri:
             st.subheader("Sezione Sinistri (In sviluppo)")
