@@ -192,7 +192,9 @@ else:
             render_analisi_premi(conn)
             
         with tab_sinistri:
-            st.subheader("Sezione Sinistri (In sviluppo)")
+            from src.components.sinistri import render_analisi_sinistri
+    
+            render_analisi_sinistri(conn)
             
     else:
         st.error("⚠️ Connessione al database persa. Effettua nuovamente l'accesso.")
