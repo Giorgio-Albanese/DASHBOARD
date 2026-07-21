@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import altair as alt
 
 def costruisci_campo_data_safe(colonna):
     """Crea la stringa SQL per il parsing sicuro delle date in DuckDB."""
@@ -58,7 +57,7 @@ def render_analisi_premi(conn):
                 (df_aggregato['Anno_Effetto'] <= 2050)
             ]
 
-            # Pivot Table
+            # Pivot Table (Righe: Anno, Colonne: Ramo)
             df_pivot = df_aggregato.pivot(
                 index='Anno_Effetto', 
                 columns='Ramo', 
@@ -67,39 +66,27 @@ def render_analisi_premi(conn):
             
             df_pivot['Totale Generale'] = df_pivot.sum(axis=1)
 
-            # --- 1. VISUALIZZAZIONE GRAFICA (VERDE E ROSSO HDI) ---
+            # --- 1. VISUALIZZAZIONE GRAFICA NATIVA STREAMLIT ---
             st.markdown("<div class='metric-card'><h4>📈 Andamento Storico</h4></div>", unsafe_allow_html=True)
             
             df_chart = df_pivot.drop(columns=['Totale Generale'], errors='ignore')
             
-            df_melted = df_chart.reset_index().melt(
-                id_vars='Anno_Effetto', 
-                var_name='Ramo', 
-                value_name='Premio_Netto'
-            )
+            # Assegniamo in modo dinamico Verde a DANNI e Rosso a VITA
+            colori_rami = []
+            for col in df_chart.columns:
+                if 'DANNI' in str(col).upper():
+                    colori_rami.append('#007A33')  # Verde HDI
+                elif 'VITA' in str(col).upper():
+                    colori_rami.append('#C8102E')   # Rosso HDI
+                else:
+                    colori_rami.append('#6B7280')
 
-            chart = alt.Chart(df_melted).mark_bar().encode(
-                x=alt.X('Anno_Effetto:O', title='Anno di Effetto', axis=alt.Axis(labelAngle=-45)),
-                y=alt.Y('Premio_Netto:Q', title='Premio Netto (€)'),
-                xOffset='Ramo:N',
-                color=alt.Color(
-                    'Ramo:N', 
-                    scale=alt.Scale(
-                        domain=['DANNI', 'VITA'], 
-                        range=['#007A33', '#C8102E']  # Verde HDI e Rosso HDI
-                    ),
-                    legend=alt.Legend(title="Ramo", orient="top")
-                ),
-                tooltip=[
-                    alt.Tooltip('Anno_Effetto:O', title='Anno'),
-                    alt.Tooltip('Ramo:N', title='Ramo'),
-                    alt.Tooltip('Premio_Netto:Q', title='Premio Netto', format='€ ,.2f')
-                ]
-            ).properties(
-                height=380
+            st.bar_chart(
+                df_chart,
+                stack=False,
+                color=colori_rami if colori_rami else None,
+                use_container_width=True
             )
-
-            st.altair_chart(chart, use_container_width=True)
 
             # --- 2. TABELLA PIVOT NAVIGABILE ---
             col_titolo, col_download = st.columns([3, 1])
