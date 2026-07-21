@@ -13,22 +13,22 @@ def costruisci_campo_data_safe(colonna):
     ) AS DATE)"""
 
 def render_analisi_sinistri(conn):
-    # st.markdown("""
-    #     <style>
-    #     .metric-card-sinistri {
-    #         background-color: white;
-    #         padding: 15px;
-    #         border-radius: 8px;
-    #         border: 1px solid #E5E7EB;
-    #         border-left: 4px solid #C8102E;
-    #         box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    #         margin-bottom: 20px;
-    #     }
-    #     </style>
-    # """, unsafe_allow_html=True)
+    st.markdown("""
+        <style>
+        .metric-card-sinistri {
+            background-color: white;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #E5E7EB;
+            border-left: 4px solid #C8102E;
+            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+            margin-bottom: 20px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
-    st.markdown("### 🚨 Claim Velocity")
-    #st.markdown("Analisi dell'incisività dei sinistri: quanto velocemente la coorte sviluppa un **Loss Ratio %** (Importo Liquidato Cumulato / Totale Premio Netto Emesso del subset) nei primi 10 anni dalla messa in copertura.")
+    st.markdown("### 🚨 Loss Ratio Cumulato (Claim Velocity)")
+    st.markdown("Analisi dell'incisività dei sinistri: quanto velocemente la coorte sviluppa un **Loss Ratio %** (Importo Liquidato Cumulato / Denominatore Premi del subset) nei primi 10 anni dalla messa in copertura.")
 
     # --- SETUP FILTRI ED ESTRAZIONE DIMENSIONI ---
     data_eff_safe = costruisci_campo_data_safe("DATAEFFETTO")
@@ -38,7 +38,8 @@ def render_analisi_sinistri(conn):
         query_filtri = f"""
             SELECT DISTINCT 
                 YEAR({data_eff_safe}) AS Generazione,
-                COALESCE(CONTRAENTE, 'SCONOSCIUTO') AS Contraente
+                COALESCE(CONTRAENTE, 'SCONOSCIUTO') AS Contraente,
+                COALESCE(GARANZIA, 'SCONOSCIUTO') AS Garanzia
             FROM vista_polizze
             WHERE DATAEFFETTO IS NOT NULL
               AND YEAR({data_eff_safe}) BETWEEN 1990 AND 2050
@@ -47,63 +48,86 @@ def render_analisi_sinistri(conn):
         
     generazioni_disp = sorted(df_filtri['Generazione'].dropna().unique().astype(int).tolist(), reverse=True)
     contraenti_disp = sorted(df_filtri['Contraente'].dropna().unique().tolist())
+    garanzie_disp = sorted(df_filtri['Garanzia'].dropna().unique().tolist())
 
     if not generazioni_disp or not contraenti_disp:
         st.warning("Dati insufficienti per generare l'analisi di sviluppo.")
         return
 
-    # --- UI: CONFIGURAZIONE COORTI ---
+    # --- UI: SCELTA DIMENSIONE E CONFIGURAZIONE COORTI ---
     st.markdown("<div class='metric-card-sinistri'>", unsafe_allow_html=True)
     
-    st.markdown("##### 🎯 Target")
+    col_dim_scelta, col_toggle_est = st.columns([2, 2])
+    with col_dim_scelta:
+        tipo_analisi = st.radio("Dimensione di Analisi", ["Contraente", "Garanzia"], horizontal=True)
+    with col_toggle_est:
+        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True) # Spaziatura visiva
+        usa_estinzioni = st.toggle("➕ Includi Estinzioni nei Premi (Premi Netto + Estinzioni)")
+
+    col_dim = "CONTRAENTE" if tipo_analisi == "Contraente" else "GARANZIA"
+    valori_disp = contraenti_disp if tipo_analisi == "Contraente" else garanzie_disp
+
+    st.markdown("---")
+    st.markdown(f"##### 🎯 Configurazione Coorte Target ({tipo_analisi})")
+    
     col1, col2 = st.columns(2)
     with col1:
-        gen_target = st.selectbox("Generazione Target (Anno Effetto)", generazioni_disp)
+        gen_target = st.selectbox("Generazione Target (Anno Effetto)", generazioni_disp, key="gen_target")
     with col2:
-        contr_target = st.selectbox("Contraente Target", contraenti_disp)
+        val_target = st.selectbox(f"{tipo_analisi} Target", valori_disp, key="val_target")
 
-    confronto_attivo = st.toggle("🔄")
+    confronto_attivo = st.toggle("🔄 Confronta con una coorte specifica (anziché con il resto del portafoglio)", key="toggle_confronto")
     
     if confronto_attivo:
-        st.markdown("##### ⚖️ Confronto")
+        st.markdown(f"##### ⚖️ Configurazione Coorte di Confronto ({tipo_analisi})")
         col3, col4 = st.columns(2)
         with col3:
-            gen_bench = st.selectbox("Generazione di Confronto", generazioni_disp, index=1 if len(generazioni_disp) > 1 else 0)
+            gen_bench = st.selectbox("Generazione di Confronto", generazioni_disp, index=1 if len(generazioni_disp) > 1 else 0, key="gen_bench")
         with col4:
-            contr_bench = st.selectbox("Contraente di Confronto", contraenti_disp)
+            val_bench = st.selectbox(f"{tipo_analisi} di Confronto", valori_disp, key="val_bench")
         
-        if gen_target == gen_bench and contr_target == contr_bench:
-            st.warning("⚠️ Hai selezionato lo stesso contraente e la stessa generazione per il confronto. Seleziona parametri differenti.")
+        if gen_target == gen_bench and val_target == val_bench:
+            st.warning("⚠️ Hai selezionato lo stesso elemento e la stessa generazione per il confronto. Seleziona parametri differenti.")
             st.markdown("</div>", unsafe_allow_html=True)
             return
 
-        label_bench = f"Confronto ({gen_bench} - {contr_bench})"
+        label_bench = f"Confronto ({gen_bench} - {val_bench})"
     else:
         gen_bench = gen_target
-        contr_bench = "RESTO_PORTAFOGLIO"
+        val_bench = "RESTO_PORTAFOGLIO"
         label_bench = "Resto Portafoglio"
 
     st.markdown("</div>", unsafe_allow_html=True)
 
     # --- COSTRUZIONE CONDIZIONI SQL SANITIZZATE ---
-    contr_target_safe = contr_target.replace("'", "''")
-    cond_target = f"YEAR({data_eff_safe}) = {gen_target} AND COALESCE(CONTRAENTE, 'SCONOSCIUTO') = '{contr_target_safe}'"
+    val_target_safe = str(val_target).replace("'", "''")
+    cond_target = f"YEAR({data_eff_safe}) = {gen_target} AND COALESCE({col_dim}, 'SCONOSCIUTO') = '{val_target_safe}'"
     
     if confronto_attivo:
-        contr_bench_safe = contr_bench.replace("'", "''")
-        cond_bench = f"YEAR({data_eff_safe}) = {gen_bench} AND COALESCE(CONTRAENTE, 'SCONOSCIUTO') = '{contr_bench_safe}'"
+        val_bench_safe = str(val_bench).replace("'", "''")
+        cond_bench = f"YEAR({data_eff_safe}) = {gen_bench} AND COALESCE({col_dim}, 'SCONOSCIUTO') = '{val_bench_safe}'"
     else:
-        cond_bench = f"YEAR({data_eff_safe}) = {gen_target} AND COALESCE(CONTRAENTE, 'SCONOSCIUTO') != '{contr_target_safe}'"
+        cond_bench = f"YEAR({data_eff_safe}) = {gen_target} AND COALESCE({col_dim}, 'SCONOSCIUTO') != '{val_target_safe}'"
 
     label_bench_sql = label_bench.replace("'", "''")
 
-    # --- NOMI FILE DINAMICI PER EXPORT ---
-    clean_target = f"{gen_target}_{str(contr_target).replace(' ', '_').replace('''\'''', '').replace('/', '_')}"
-    if confronto_attivo:
-        clean_bench = f"{gen_bench}_{str(contr_bench).replace(' ', '_').replace('''\'''', '').replace('/', '_')}"
-        nome_export = f"target_{clean_target}_vs_confronto_{clean_bench}"
+    # --- DEFINIZIONE ESPRESSIONE PREMI (CON O SENZA ESTINZIONI) ---
+    if usa_estinzioni:
+        premio_expr = "CAST(COALESCE(PREMI_NETTO, 0) + COALESCE(ESTINZIONI, 0) AS DOUBLE)"
     else:
-        nome_export = f"target_{clean_target}"
+        premio_expr = "CAST(COALESCE(PREMI_NETTO, 0) AS DOUBLE)"
+
+    # --- NOMI FILE DINAMICI PER EXPORT ---
+    dim_prefix = tipo_analisi.lower()
+    clean_target = f"{gen_target}_{str(val_target).replace(' ', '_').replace('''\'''', '').replace('/', '_')}"
+    if confronto_attivo:
+        clean_bench = f"{gen_bench}_{str(val_bench).replace(' ', '_').replace('''\'''', '').replace('/', '_')}"
+        nome_export = f"target_{dim_prefix}_{clean_target}_vs_confronto_{dim_prefix}_{clean_bench}"
+    else:
+        nome_export = f"target_{dim_prefix}_{clean_target}"
+
+    if usa_estinzioni:
+        nome_export += "_con_estinzioni"
 
     # --- ESECUZIONE QUERY SVILUPPO LOSS RATIO ---
     with st.spinner("Calcolo triangolazione e Loss Ratio in corso..."):
@@ -113,7 +137,7 @@ def render_analisi_sinistri(conn):
                 'Target' AS Gruppo,
                 UPPER(CAST(RAMO AS VARCHAR)) AS Ramo,
                 ID,
-                CAST(COALESCE(PREMI_NETTO, 0) AS DOUBLE) AS Premio_Netto,
+                {premio_expr} AS Premio_Netto,
                 CAST(COALESCE(LIQUIDAZIONI, 0) AS DOUBLE) AS Liquidazione,
                 YEAR({data_liq_safe}) - YEAR({data_eff_safe}) AS t_sviluppo,
                 DATALIQUIDAZIONE
@@ -125,7 +149,7 @@ def render_analisi_sinistri(conn):
                 '{label_bench_sql}' AS Gruppo,
                 UPPER(CAST(RAMO AS VARCHAR)) AS Ramo,
                 ID,
-                CAST(COALESCE(PREMI_NETTO, 0) AS DOUBLE) AS Premio_Netto,
+                {premio_expr} AS Premio_Netto,
                 CAST(COALESCE(LIQUIDAZIONI, 0) AS DOUBLE) AS Liquidazione,
                 YEAR({data_liq_safe}) - YEAR({data_eff_safe}) AS t_sviluppo,
                 DATALIQUIDAZIONE
@@ -179,7 +203,7 @@ def render_analisi_sinistri(conn):
                 names=['Gruppo', 'Ramo', 't_sviluppo']
             ).to_frame(index=False)
 
-            # Merge dei risultati SQL nella griglia per colmare i "buchi" temporali (es. nessun sinistro all'anno 2)
+            # Merge dei risultati SQL nella griglia per colmare i "buchi" temporali
             df_full = pd.merge(grid, df_sql, on=['Gruppo', 'Ramo', 't_sviluppo'], how='left').fillna(0)
             
             # Espansione del Denominatore (Tot_Premio_Netto) su tutti i tempi t
@@ -196,7 +220,7 @@ def render_analisi_sinistri(conn):
             df_full['Loss_Ratio'] = (df_full['Cum_Liquidato'] / df_full['Tot_Premio_Netto'].replace(0, np.nan)) * 100
             df_full['Loss_Ratio'] = df_full['Loss_Ratio'].fillna(0) 
 
-            # Creiamo la Serie Combinata e la Pivotata
+            # Creazione della Serie Combinata e la Pivotata
             df_full['Serie'] = df_full['Gruppo'] + " - " + df_full['Ramo']
             df_pivot = df_full.pivot(index='t_sviluppo', columns='Serie', values='Loss_Ratio').fillna(0)
 
@@ -236,7 +260,6 @@ def render_analisi_sinistri(conn):
                 height=420
             )
 
-            # Passiamo il nome del file generato dinamicamente a Plotly
             st.plotly_chart(
                 fig, 
                 use_container_width=True,
@@ -263,7 +286,6 @@ def render_analisi_sinistri(conn):
             with col_dl:
                 csv_data = df_matrix.reset_index().to_csv(index=False, sep=';', decimal=',').encode('utf-8')
                 
-                # Passiamo il nome del file generato dinamicamente al tasto Download di Streamlit
                 st.download_button(
                     label="📥 Scarica CSV Tabella",
                     data=csv_data,
