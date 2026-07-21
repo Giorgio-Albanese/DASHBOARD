@@ -27,7 +27,7 @@ def render_analisi_sinistri(conn):
     #     </style>
     # """, unsafe_allow_html=True)
 
-    st.markdown("### 🚨 Claim Velocity")
+    #st.markdown("### 🚨 Claim Velocity")
     #st.markdown("Analisi dell'incisività dei sinistri: quanto velocemente la coorte sviluppa un **Loss Ratio %** (Importo Liquidato Cumulato / Denominatore Premi del subset) nei primi 10 anni dalla messa in copertura.")
 
     # --- SETUP FILTRI ED ESTRAZIONE DIMENSIONI ---
@@ -278,7 +278,7 @@ def render_analisi_sinistri(conn):
             # --- 2. TABELLA LOSS RATIO E DOWNLOAD CSV ---
             col_titolo, col_dl = st.columns([3, 1])
             with col_titolo:
-                st.markdown("#### 🧮 Matrice Loss Ratio (%)")
+                #st.markdown("#### 🧮 Matrice Loss Ratio (%)")
             
             df_matrix = df_pivot.T
             df_matrix.columns = [f"Anno {int(c)}" for c in df_matrix.columns]
