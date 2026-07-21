@@ -30,7 +30,6 @@ def render_analisi_premi(conn):
     st.markdown("Analisi dei volumi di **Premio Netto** aggregati per Ramo (Danni/Vita) e Anno di Effetto della polizza.")
 
     with st.spinner("Aggregazione dati in corso..."):
-        # Costruiamo la query estraendo in modo sicuro l'anno e sommando i premi
         campo_data_sicuro = costruisci_campo_data_safe("DATAEFFETTO")
         
         query = f"""
@@ -47,55 +46,49 @@ def render_analisi_premi(conn):
         """
         
         try:
-            # Eseguiamo la query e carichiamo il dataframe
             df_aggregato = conn.execute(query).df()
             
             if df_aggregato.empty:
                 st.warning("Nessun dato valido trovato per l'analisi.")
                 return
 
-            # Rimuoviamo eventuali anni anomali (es. date di default come 1900 o 2099)
+            # Filtriamo gli anni di interesse
             df_aggregato = df_aggregato[
                 (df_aggregato['Anno_Effetto'] >= 1990) & 
                 (df_aggregato['Anno_Effetto'] <= 2050)
             ]
 
-            # Trasformiamo i dati in una vera Pivot Table (Righe: Anno, Colonne: Ramo)
+            # Pivot Table
             df_pivot = df_aggregato.pivot(
                 index='Anno_Effetto', 
                 columns='Ramo', 
                 values='Totale_Premio_Netto'
             ).fillna(0)
             
-            # Aggiungiamo la colonna "Totale Generale" per ogni anno
             df_pivot['Totale Generale'] = df_pivot.sum(axis=1)
 
-            # --- 1. VISUALIZZAZIONE GRAFICA (BARRE AFFIANCATE + TOOLTIP EURO) ---
+            # --- 1. VISUALIZZAZIONE GRAFICA (VERDE E ROSSO HDI) ---
             st.markdown("<div class='metric-card'><h4>📈 Andamento Storico</h4></div>", unsafe_allow_html=True)
             
-            # Prepariamo i dati per il grafico (escludiamo il Totale Generale per non sballare le proporzioni)
             df_chart = df_pivot.drop(columns=['Totale Generale'], errors='ignore')
             
-            # Adattiamo il DataFrame per Altair
             df_melted = df_chart.reset_index().melt(
                 id_vars='Anno_Effetto', 
                 var_name='Ramo', 
                 value_name='Premio_Netto'
             )
 
-            # Grafico Altair con colonne affiancate e Tooltip formattati in Euro
             chart = alt.Chart(df_melted).mark_bar().encode(
-                x=alt.X('Ramo:N', title=None, axis=None),
+                x=alt.X('Anno_Effetto:O', title='Anno di Effetto', axis=alt.Axis(labelAngle=-45)),
                 y=alt.Y('Premio_Netto:Q', title='Premio Netto (€)'),
+                xOffset='Ramo:N',
                 color=alt.Color(
                     'Ramo:N', 
-                    scale=alt.Scale(domain=['DANNI', 'VITA'], range=['#007A33', '#004D20']),
-                    legend=alt.Legend(title="Ramo")
-                ),
-                column=alt.Column(
-                    'Anno_Effetto:O', 
-                    title='Anno di Effetto',
-                    header=alt.Header(labelOrient='bottom', titleOrient='bottom', labelAngle=0)
+                    scale=alt.Scale(
+                        domain=['DANNI', 'VITA'], 
+                        range=['#007A33', '#C8102E']  # Verde HDI e Rosso HDI
+                    ),
+                    legend=alt.Legend(title="Ramo", orient="top")
                 ),
                 tooltip=[
                     alt.Tooltip('Anno_Effetto:O', title='Anno'),
@@ -103,9 +96,7 @@ def render_analisi_premi(conn):
                     alt.Tooltip('Premio_Netto:Q', title='Premio Netto', format='€ ,.2f')
                 ]
             ).properties(
-                height=340
-            ).configure_view(
-                stroke='transparent'
+                height=380
             )
 
             st.altair_chart(chart, use_container_width=True)
@@ -115,7 +106,6 @@ def render_analisi_premi(conn):
             with col_titolo:
                 st.markdown("<div class='metric-card'><h4>🧮 Tabella Dati </h4></div>", unsafe_allow_html=True)
             with col_download:
-                # Generazione CSV al volo in formato italiano (separatore ';' e decimali ',')
                 csv_data = df_pivot.reset_index().to_csv(index=False, sep=';', decimal=',').encode('utf-8')
                 st.download_button(
                     label="📥 Scarica CSV",
@@ -126,7 +116,6 @@ def render_analisi_premi(conn):
                     use_container_width=True
                 )
 
-            # Configurazione delle colonne per formattare i numeri come Valuta nativamente
             col_config = {
                 "Anno_Effetto": st.column_config.NumberColumn("Anno di Effetto", format="%d")
             }
@@ -134,11 +123,10 @@ def render_analisi_premi(conn):
             for col in df_pivot.columns:
                 col_config[col] = st.column_config.NumberColumn(
                     col,
-                    format="€ %,.2f", # Formatta con il simbolo Euro, separatore delle migliaia e 2 decimali
+                    format="€ %,.2f",
                     step=1
                 )
 
-            # Rendering della tabella con ordine decrescente per anno
             st.dataframe(
                 df_pivot.sort_index(ascending=False), 
                 use_container_width=True,
