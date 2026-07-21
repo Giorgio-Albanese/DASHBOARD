@@ -27,7 +27,7 @@ def render_analisi_sinistri(conn):
     """, unsafe_allow_html=True)
 
     st.markdown("### 🚨 Velocità di Liquidazione (Claim Velocity)")
-    st.markdown("Analisi di sviluppo: quanto velocemente una generazione satura la propria storia sinistri (fino a 10 anni dalla messa in copertura).")
+    st.markdown("Analisi di sviluppo: quanto velocemente la coorte selezionata sviluppa sinistri rispetto al proprio portafoglio emesso (fino a 10 anni dalla messa in copertura).")
 
     # --- SETUP FILTRI ED ESTRAZIONE DIMENSIONI ---
     data_eff_safe = costruisci_campo_data_safe("DATAEFFETTO")
@@ -59,7 +59,7 @@ def render_analisi_sinistri(conn):
     with col_metrica:
         metrica = st.radio(
             "📍 Metrica di Sviluppo", 
-            options=["Frequenza (N. Liquidazioni / Tot. Polizze)", "Saturazione Importi (€ Liq. / € Totale Liquidato)"]
+            options=["Frequenza % (Polizze con Sinistro / Tot. Polizze Emesse Subset)", "Loss Ratio % (€ Liquidato Cumulato / € Premio Netto Emesso Subset)"]
         )
     
     st.markdown("##### 🎯 Configurazione Coorte Target")
@@ -99,8 +99,10 @@ def render_analisi_sinistri(conn):
         cond_bench = f"YEAR({data_eff_safe}) = {gen_target} AND COALESCE(CONTRAENTE, 'SCONOSCIUTO') != '{contr_target_safe}'"
 
     with st.spinner("Calcolo triangolazioni in corso..."):
+        # Query con calcolo puntuale sul subset esatto
         query_sviluppo = f"""
-        WITH DatiTag AS (
+        WITH PolizzeEmesse AS (
+            -- 1. ESTRAZIONE E IDENTIFICAZIONE SUBSET (Premio Totale e Polizze Emesse)
             SELECT
                 CASE 
                     WHEN {cond_target} THEN 'Target'
@@ -108,51 +110,63 @@ def render_analisi_sinistri(conn):
                     ELSE NULL
                 END AS Gruppo,
                 UPPER(CAST(RAMO AS VARCHAR)) AS Ramo,
-                YEAR({data_liq_safe}) - YEAR({data_eff_safe}) AS t_sviluppo,
                 ID,
-                CAST(LIQUIDAZIONI AS DOUBLE) AS Liquidazione
+                CAST(COALESCE(PREMI_NETTO, 0) AS DOUBLE) AS Premio_Netto,
+                CAST(COALESCE(LIQUIDAZIONI, 0) AS DOUBLE) AS Liquidazione,
+                DATALIQUIDAZIONE,
+                YEAR({data_eff_safe}) AS Anno_Effetto,
+                YEAR({data_liq_safe}) - YEAR({data_eff_safe}) AS t_sviluppo
             FROM vista_polizze
             WHERE DATAEFFETTO IS NOT NULL
         ),
-        BaseDati AS (
-            SELECT * FROM DatiTag WHERE Gruppo IS NOT NULL
+        SubsetFiltrato AS (
+            SELECT * FROM PolizzeEmesse WHERE Gruppo IS NOT NULL
         ),
-        SintesiCoorte AS (
+        DenominatoreSubset AS (
+            -- 2. DENOMINATORE ESATTO: Totale Polizze Emesse e Premio Netto Totale per (Anno, Contraente, Ramo)
             SELECT
-                Gruppo, Ramo,
-                COUNT(DISTINCT ID) AS Tot_Polizze_Coorte,
-                SUM(Liquidazione) AS Tot_Liquidato_Coorte
-            FROM BaseDati
+                Gruppo,
+                Ramo,
+                COUNT(DISTINCT ID) AS Tot_Polizze_Emesse,
+                SUM(Premio_Netto) AS Tot_Premio_Netto_Emesso
+            FROM SubsetFiltrato
             GROUP BY Gruppo, Ramo
         ),
-        SviluppoTemporale AS (
+        NumeratoreSviluppo AS (
+            -- 3. NUMERATORE: Solo le polizze con sinistro/liquidazione registrata entro l'anno t
             SELECT
-                Gruppo, Ramo, t_sviluppo,
-                COUNT(ID) AS Num_Sinistri_t,
+                Gruppo,
+                Ramo,
+                t_sviluppo,
+                COUNT(DISTINCT ID) AS Num_Polizze_Con_Sinistro_t,
                 SUM(Liquidazione) AS Liquidato_t
-            FROM BaseDati
-            WHERE t_sviluppo IS NOT NULL AND t_sviluppo >= 0 AND t_sviluppo <= 10
+            FROM SubsetFiltrato
+            WHERE DATALIQUIDAZIONE IS NOT NULL 
+              AND t_sviluppo IS NOT NULL 
+              AND t_sviluppo >= 0 
+              AND t_sviluppo <= 10
             GROUP BY Gruppo, Ramo, t_sviluppo
         )
         SELECT
-            s.Gruppo, s.Ramo,
-            s.Tot_Polizze_Coorte,
-            s.Tot_Liquidato_Coorte,
-            v.t_sviluppo,
-            v.Num_Sinistri_t,
-            v.Liquidato_t
-        FROM SintesiCoorte s
-        LEFT JOIN SviluppoTemporale v ON s.Gruppo = v.Gruppo AND s.Ramo = v.Ramo
+            d.Gruppo,
+            d.Ramo,
+            d.Tot_Polizze_Emesse,
+            d.Tot_Premio_Netto_Emesso,
+            n.t_sviluppo,
+            COALESCE(n.Num_Polizze_Con_Sinistro_t, 0) AS Num_Polizze_Con_Sinistro_t,
+            COALESCE(n.Liquidato_t, 0) AS Liquidato_t
+        FROM DenominatoreSubset d
+        LEFT JOIN NumeratoreSviluppo n ON d.Gruppo = n.Gruppo AND d.Ramo = n.Ramo
         """
         
         try:
             df_sql = conn.execute(query_sviluppo).df()
             
             if df_sql.empty:
-                st.info("Nessun sinistro o polizza trovata per le coorti selezionate.")
+                st.info("Nessun dato trovato per le coorti selezionate.")
                 return
 
-            # Costruiamo una griglia fissa t=0 ... t=10 per evitare spezzature di linee
+            # Griglia fissa t=0 ... t=10 per evitare buchi nella linea
             grid = pd.MultiIndex.from_product(
                 [['Target', label_bench], ['DANNI', 'VITA'], range(11)],
                 names=['Gruppo', 'Ramo', 't_sviluppo']
@@ -161,18 +175,24 @@ def render_analisi_sinistri(conn):
             # Merge e pulizia
             df_sviluppo = pd.merge(grid, df_sql, on=['Gruppo', 'Ramo', 't_sviluppo'], how='left').fillna(0)
             
-            totali = df_sql[['Gruppo', 'Ramo', 'Tot_Polizze_Coorte', 'Tot_Liquidato_Coorte']].dropna().drop_duplicates()
-            df_sviluppo = df_sviluppo.drop(columns=['Tot_Polizze_Coorte', 'Tot_Liquidato_Coorte'], errors='ignore')
+            totali = df_sql[['Gruppo', 'Ramo', 'Tot_Polizze_Emesse', 'Tot_Premio_Netto_Emesso']].dropna().drop_duplicates()
+            df_sviluppo = df_sviluppo.drop(columns=['Tot_Polizze_Emesse', 'Tot_Premio_Netto_Emesso'], errors='ignore')
             df_sviluppo = pd.merge(df_sviluppo, totali, on=['Gruppo', 'Ramo'], how='left')
             
             # Calcolo cumulata
             df_sviluppo = df_sviluppo.sort_values(['Gruppo', 'Ramo', 't_sviluppo'])
-            df_sviluppo['Cum_Sinistri'] = df_sviluppo.groupby(['Gruppo', 'Ramo'])['Num_Sinistri_t'].cumsum()
+            df_sviluppo['Cum_Sinistri'] = df_sviluppo.groupby(['Gruppo', 'Ramo'])['Num_Polizze_Con_Sinistro_t'].cumsum()
             df_sviluppo['Cum_Liquidato'] = df_sviluppo.groupby(['Gruppo', 'Ramo'])['Liquidato_t'].cumsum()
 
-            # Calcolo percentuali
-            df_sviluppo['Saturazione_Freq'] = (df_sviluppo['Cum_Sinistri'] / df_sviluppo['Tot_Polizze_Coorte'].replace(0, np.nan)) * 100
-            df_sviluppo['Saturazione_Imp'] = (df_sviluppo['Cum_Liquidato'] / df_sviluppo['Tot_Liquidato_Coorte'].replace(0, np.nan)) * 100
+            # --- METRICHE RIFERITE AL SUBSET ESATTO ---
+            df_sviluppo['Saturazione_Freq'] = (
+                df_sviluppo['Cum_Sinistri'] / df_sviluppo['Tot_Polizze_Emesse'].replace(0, np.nan)
+            ) * 100
+
+            df_sviluppo['Saturazione_Imp'] = (
+                df_sviluppo['Cum_Liquidato'] / df_sviluppo['Tot_Premio_Netto_Emesso'].replace(0, np.nan)
+            ) * 100
+
             df_sviluppo = df_sviluppo.fillna(0)
 
             # --- PREPARAZIONE GRAFICO ---
@@ -204,7 +224,7 @@ def render_analisi_sinistri(conn):
             df_matrix = df_chart.T
             df_matrix.columns = [f"Anno {int(c)}" for c in df_matrix.columns]
             
-            col_config = {col: st.column_config.NumberColumn(col, format="%.1f %%") for col in df_matrix.columns}
+            col_config = {col: st.column_config.NumberColumn(col, format="%.2f %%") for col in df_matrix.columns}
             
             st.dataframe(df_matrix, use_container_width=True, column_config=col_config)
 
