@@ -102,7 +102,7 @@ def render_analisi_premi(conn):
             for col in df_pivot.columns:
                 col_config[col] = st.column_config.NumberColumn(
                     col,
-                    format="€ ,.2f", # Formatta con il simbolo Euro e 2 decimali
+                    format="€ %,.2f", # Formatta con il simbolo Euro e 2 decimali
                     step=1
                 )
 

@@ -370,13 +370,14 @@ def render_db_navigator(conn):
             query_completa = f"SELECT * FROM vista_polizze{stringa_where_completa}"
             
             # --- OTTIMIZZAZIONE 4: DEFERRED CSV GENERATION ---
-        with col_dl:
+        
             @st.cache_data(ttl=60)
             def genera_csv(query):
                 df_download = conn.execute(query).df()
                 # Aggiungiamo sep=';' e decimal=',' per l'export in stile italiano
                 return df_download.to_csv(index=False, sep=';', decimal=',').encode('utf-8')
-                
+            
+            if st.session_state.get("genera_download", False):
                 with st.spinner("Creazione CSV in corso..."):
                     csv_data = genera_csv(query_completa)
                 
@@ -404,7 +405,7 @@ def render_db_navigator(conn):
         for col in colonne_float:
             column_config[col] = st.column_config.NumberColumn(
                 col,
-                format=",.2f" # Format specificato nativamente
+                format="%.2f" # Format specificato nativamente
             )
         
         # Rendering diretto del dataframe (senza Styler)
