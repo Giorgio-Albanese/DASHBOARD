@@ -67,7 +67,7 @@ def render_analisi_premi(conn):
             df_pivot['Totale Generale'] = df_pivot.sum(axis=1)
 
             # --- 1. VISUALIZZAZIONE GRAFICA NATIVA STREAMLIT ---
-            st.markdown("<div class='metric-card'><h4>📈 Andamento Storico</h4></div>", unsafe_allow_html=True)
+            #st.markdown("<div class='metric-card'><h4>📈 Andamento Storico</h4></div>", unsafe_allow_html=True)
             
             df_chart = df_pivot.drop(columns=['Totale Generale'], errors='ignore')
             
