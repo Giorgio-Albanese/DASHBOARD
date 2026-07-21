@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import altair as alt
 
 def costruisci_campo_data_safe(colonna):
     """Crea la stringa SQL per il parsing sicuro delle date in DuckDB."""
@@ -69,21 +70,52 @@ def render_analisi_premi(conn):
             # Aggiungiamo la colonna "Totale Generale" per ogni anno
             df_pivot['Totale Generale'] = df_pivot.sum(axis=1)
 
-            # --- 1. VISUALIZZAZIONE GRAFICA ---
-            #st.markdown("<div class='metric-card'><h4>📈 Andamento Storico</h4></div>", unsafe_allow_html=True)
+            # --- 1. VISUALIZZAZIONE GRAFICA (BARRE AFFIANCATE + TOOLTIP EURO) ---
+            st.markdown("<div class='metric-card'><h4>📈 Andamento Storico</h4></div>", unsafe_allow_html=True)
             
             # Prepariamo i dati per il grafico (escludiamo il Totale Generale per non sballare le proporzioni)
             df_chart = df_pivot.drop(columns=['Totale Generale'], errors='ignore')
             
-            # Streamlit bar_chart nativo: interattivo, raggruppato e zero sbattimenti
-            st.bar_chart(df_chart,stack = False, use_container_width=True)
+            # Adattiamo il DataFrame per Altair
+            df_melted = df_chart.reset_index().melt(
+                id_vars='Anno_Effetto', 
+                var_name='Ramo', 
+                value_name='Premio_Netto'
+            )
+
+            # Grafico Altair con colonne affiancate e Tooltip formattati in Euro
+            chart = alt.Chart(df_melted).mark_bar().encode(
+                x=alt.X('Ramo:N', title=None, axis=None),
+                y=alt.Y('Premio_Netto:Q', title='Premio Netto (€)'),
+                color=alt.Color(
+                    'Ramo:N', 
+                    scale=alt.Scale(domain=['DANNI', 'VITA'], range=['#007A33', '#004D20']),
+                    legend=alt.Legend(title="Ramo")
+                ),
+                column=alt.Column(
+                    'Anno_Effetto:O', 
+                    title='Anno di Effetto',
+                    header=alt.Header(labelOrient='bottom', titleOrient='bottom', labelAngle=0)
+                ),
+                tooltip=[
+                    alt.Tooltip('Anno_Effetto:O', title='Anno'),
+                    alt.Tooltip('Ramo:N', title='Ramo'),
+                    alt.Tooltip('Premio_Netto:Q', title='Premio Netto', format='€ ,.2f')
+                ]
+            ).properties(
+                height=340
+            ).configure_view(
+                stroke='transparent'
+            )
+
+            st.altair_chart(chart, use_container_width=True)
 
             # --- 2. TABELLA PIVOT NAVIGABILE ---
             col_titolo, col_download = st.columns([3, 1])
             with col_titolo:
                 st.markdown("<div class='metric-card'><h4>🧮 Tabella Dati </h4></div>", unsafe_allow_html=True)
             with col_download:
-                # Generazione CSV al volo
+                # Generazione CSV al volo in formato italiano (separatore ';' e decimali ',')
                 csv_data = df_pivot.reset_index().to_csv(index=False, sep=';', decimal=',').encode('utf-8')
                 st.download_button(
                     label="📥 Scarica CSV",
@@ -102,13 +134,13 @@ def render_analisi_premi(conn):
             for col in df_pivot.columns:
                 col_config[col] = st.column_config.NumberColumn(
                     col,
-                    format="€ %,.2f", # Formatta con il simbolo Euro e 2 decimali
+                    format="€ %,.2f", # Formatta con il simbolo Euro, separatore delle migliaia e 2 decimali
                     step=1
                 )
 
-            # Rendering della tabella con la configurazione robusta (senza .style)
+            # Rendering della tabella con ordine decrescente per anno
             st.dataframe(
-                df_pivot.sort_index(ascending=False), # Ordine decrescente per l'anno
+                df_pivot.sort_index(ascending=False), 
                 use_container_width=True,
                 column_config=col_config
             )

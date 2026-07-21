@@ -422,7 +422,7 @@ def render_db_navigator(conn):
     else:
         st.warning("Nessun record da mostrare con i filtri applicati.")
 
-    # =========================================================================
+# =========================================================================
     # 4. REPORT TABELLARE DI SINTESI
     # =========================================================================
     st.markdown('<div class="hdi-card"><h3>📈 Statistiche di Sintesi</h3></div>', unsafe_allow_html=True)
@@ -454,16 +454,18 @@ def render_db_navigator(conn):
             
             try:
                 df_stats = conn.execute(query_pivot_completa).df()
-                df_stats_formatted = df_stats.copy()
                 
-                for metric_col in ['SUM', 'AVG', 'MAX', 'MIN']:
-                    col_key = metric_col if metric_col in df_stats_formatted.columns else metric_col.lower()
-                    if col_key in df_stats_formatted.columns:
-                        df_stats_formatted[col_key] = df_stats_formatted[col_key].apply(
-                            lambda x: f"{x:,.1f}".replace(",", "X").replace(".", ",").replace("X", ".") if pd.notnull(x) else "-"
-                        )
+                # Configurazione automatica dei separatori e dell'Euro per tutte le colonne metriche
+                col_config_stats = {
+                    metric: st.column_config.NumberColumn(metric, format="€ %,.2f")
+                    for metric in ["SOMMA", "MEDIA", "MASSIMO", "MINIMO"]
+                }
                 
-                df_stats_formatted.columns = ["Variabile Finanziaria", "SOMMA", "MEDIA", "MASSIMO", "MINIMO"]
-                st.dataframe(df_stats_formatted, use_container_width=True, hide_index=True)
+                st.dataframe(
+                    df_stats, 
+                    column_config=col_config_stats, 
+                    use_container_width=True, 
+                    hide_index=True
+                )
             except Exception as e:
                 st.error(f"Errore durante il calcolo delle statistiche: {e}")
