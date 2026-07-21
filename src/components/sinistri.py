@@ -20,21 +20,20 @@ def render_analisi_sinistri(conn):
             padding: 15px;
             border-radius: 8px;
             border: 1px solid #E5E7EB;
-            border-left: 4px solid #C8102E; /* Bordo Rosso HDI */
+            border-left: 4px solid #C8102E;
             box-shadow: 0 1px 2px rgba(0,0,0,0.05);
             margin-bottom: 20px;
         }
         </style>
     """, unsafe_allow_html=True)
 
-    st.markdown("### 🚨 Velocità di Liquidazione (Claim Velocity)")
-    st.markdown("Analisi dello sviluppo cumulato degli **importi liquidati (€)** nel corso dei primi 10 anni dalla messa in copertura.")
+    st.markdown("### 🚨 Loss Ratio Cumulato (Claim Velocity)")
+    st.markdown("Analisi dell'incisività dei sinistri: quanto velocemente la coorte sviluppa un **Loss Ratio %** (Importo Liquidato Cumulato / Totale Premio Netto Emesso del subset) nei primi 10 anni dalla messa in copertura.")
 
     # --- SETUP FILTRI ED ESTRAZIONE DIMENSIONI ---
     data_eff_safe = costruisci_campo_data_safe("DATAEFFETTO")
     data_liq_safe = costruisci_campo_data_safe("DATALIQUIDAZIONE")
 
-    # Recuperiamo generazioni e contraenti disponibili
     with st.spinner("Lettura portafoglio in corso..."):
         query_filtri = f"""
             SELECT DISTINCT 
@@ -63,7 +62,7 @@ def render_analisi_sinistri(conn):
     with col2:
         contr_target = st.selectbox("Contraente Target", contraenti_disp)
 
-    confronto_attivo = st.toggle("🔄 Confronta con un'altra coorte specifica (anziché con il resto del portafoglio)")
+    confronto_attivo = st.toggle("🔄 Confronta con una coorte specifica (anziché con il resto del portafoglio)")
     
     if confronto_attivo:
         st.markdown("##### ⚖️ Configurazione Coorte di Confronto")
@@ -86,7 +85,7 @@ def render_analisi_sinistri(conn):
 
     st.markdown("</div>", unsafe_allow_html=True)
 
-    # --- COSTRUZIONE CONDITION SQL SANITIZZATE ---
+    # --- COSTRUZIONE CONDIZIONI SQL SANITIZZATE ---
     contr_target_safe = contr_target.replace("'", "''")
     cond_target = f"YEAR({data_eff_safe}) = {gen_target} AND COALESCE(CONTRAENTE, 'SCONOSCIUTO') = '{contr_target_safe}'"
     
@@ -96,61 +95,112 @@ def render_analisi_sinistri(conn):
     else:
         cond_bench = f"YEAR({data_eff_safe}) = {gen_target} AND COALESCE(CONTRAENTE, 'SCONOSCIUTO') != '{contr_target_safe}'"
 
-    label_bench_sql = label_bench.replace("'", "''")
-
-    # --- ESECUZIONE QUERY SVILUPPO ---
-    with st.spinner("Calcolo sviluppo sinistri in corso..."):
+    # --- ESECUZIONE QUERY SVILUPPO LOSS RATIO ---
+    with st.spinner("Calcolo triangolazione e Loss Ratio in corso..."):
         query_sviluppo = f"""
-        SELECT
-            CASE 
-                WHEN {cond_target} THEN 'Target'
-                WHEN {cond_bench} THEN '{label_bench_sql}'
-                ELSE NULL
-            END AS Gruppo,
-            UPPER(CAST(RAMO AS VARCHAR)) AS Ramo,
-            YEAR({data_liq_safe}) - YEAR({data_eff_safe}) AS t_sviluppo,
-            SUM(CAST(COALESCE(LIQUIDAZIONI, 0) AS DOUBLE)) AS Liquidato_t
-        FROM vista_polizze
-        WHERE DATAEFFETTO IS NOT NULL
-          AND DATALIQUIDAZIONE IS NOT NULL
-        GROUP BY Gruppo, Ramo, t_sviluppo
-        HAVING Gruppo IS NOT NULL 
-           AND t_sviluppo >= 0 
-           AND t_sviluppo <= 10
+        WITH TargetData AS (
+            SELECT 
+                'Target' AS Gruppo_Cod,
+                UPPER(CAST(RAMO AS VARCHAR)) AS Ramo,
+                NUMEROPOLIZZA,
+                CAST(COALESCE(PREMI_NETTO, 0) AS DOUBLE) AS Premio_Netto,
+                CAST(COALESCE(LIQUIDAZIONI, 0) AS DOUBLE) AS Liquidazione,
+                YEAR({data_liq_safe}) - YEAR({data_eff_safe}) AS t_sviluppo,
+                DATALIQUIDAZIONE
+            FROM vista_polizze
+            WHERE DATAEFFETTO IS NOT NULL AND ({cond_target})
+        ),
+        BenchData AS (
+            SELECT 
+                'Benchmark' AS Gruppo_Cod,
+                UPPER(CAST(RAMO AS VARCHAR)) AS Ramo,
+                NUMEROPOLIZZA,
+                CAST(COALESCE(PREMI_NETTO, 0) AS DOUBLE) AS Premio_Netto,
+                CAST(COALESCE(LIQUIDAZIONI, 0) AS DOUBLE) AS Liquidazione,
+                YEAR({data_liq_safe}) - YEAR({data_eff_safe}) AS t_sviluppo,
+                DATALIQUIDAZIONE
+            FROM vista_polizze
+            WHERE DATAEFFETTO IS NOT NULL AND ({cond_bench})
+        ),
+        CombinedData AS (
+            SELECT * FROM TargetData
+            UNION ALL
+            SELECT * FROM BenchData
+        ),
+        Denominatore AS (
+            -- Calcoliamo il premio univoco per polizza (evita inflazione se ci sono più righe sinistro per polizza)
+            SELECT 
+                Gruppo_Cod, Ramo,
+                SUM(Premio_Netto_Univoco) AS Tot_Premio_Netto
+            FROM (
+                SELECT Gruppo_Cod, Ramo, NUMEROPOLIZZA, MAX(Premio_Netto) AS Premio_Netto_Univoco
+                FROM CombinedData
+                GROUP BY Gruppo_Cod, Ramo, NUMEROPOLIZZA
+            ) sub
+            GROUP BY Gruppo_Cod, Ramo
+        ),
+        Numeratore AS (
+            -- Calcoliamo il totale liquidato all'anno t
+            SELECT 
+                Gruppo_Cod, Ramo, t_sviluppo,
+                SUM(Liquidazione) AS Liquidato_t
+            FROM CombinedData
+            WHERE DATALIQUIDAZIONE IS NOT NULL 
+              AND t_sviluppo >= 0 AND t_sviluppo <= 10
+            GROUP BY Gruppo_Cod, Ramo, t_sviluppo
+        )
+        SELECT 
+            d.Gruppo_Cod, d.Ramo, d.Tot_Premio_Netto,
+            n.t_sviluppo, COALESCE(n.Liquidato_t, 0) AS Liquidato_t
+        FROM Denominatore d
+        LEFT JOIN Numeratore n ON d.Gruppo_Cod = n.Gruppo_Cod AND d.Ramo = n.Ramo
         """
         
         try:
             df_sql = conn.execute(query_sviluppo).df()
             
             if df_sql.empty:
-                st.info("Nessun sinistro liquidato trovato per le coorti selezionate.")
+                st.info("Nessun dato trovato per le coorti selezionate.")
                 return
 
-            # Griglia fissa t=0 ... t=10 per tutte le combinazioni
-            gruppi_presenti = [g for g in ['Target', label_bench] if g in df_sql['Gruppo'].unique()]
+            # Mappiamo i Gruppi_Cod interni (Target/Benchmark) ai nomi visivi (Target/label_bench) scelti dall'utente
+            label_map = {'Target': 'Target', 'Benchmark': label_bench}
+            df_sql['Gruppo'] = df_sql['Gruppo_Cod'].map(label_map)
+
+            # Creazione della griglia fissa per garantire che le linee traccino per t=0...10
+            gruppi_presenti = df_sql['Gruppo'].dropna().unique().tolist()
             grid = pd.MultiIndex.from_product(
                 [gruppi_presenti, ['DANNI', 'VITA'], range(11)],
                 names=['Gruppo', 'Ramo', 't_sviluppo']
             ).to_frame(index=False)
 
-            # Merge e pulizia
+            # Merge dei risultati SQL nella griglia
             df_full = pd.merge(grid, df_sql, on=['Gruppo', 'Ramo', 't_sviluppo'], how='left').fillna(0)
             
-            # Ordine e Somma Cumulata dell'importo liquidato
+            # Espansione del Denominatore (Tot_Premio_Netto) su tutti i tempi t
+            totali = df_sql[['Gruppo', 'Ramo', 'Tot_Premio_Netto']].replace(0, np.nan).dropna().drop_duplicates()
+            df_full = df_full.drop(columns=['Tot_Premio_Netto'], errors='ignore')
+            df_full = pd.merge(df_full, totali, on=['Gruppo', 'Ramo'], how='left')
+
+            # Ordinamento e calcolo Cumulata del Liquidato
             df_full = df_full.sort_values(['Gruppo', 'Ramo', 't_sviluppo'])
             df_full['Cum_Liquidato'] = df_full.groupby(['Gruppo', 'Ramo'])['Liquidato_t'].cumsum()
 
+            # --- CALCOLO LOSS RATIO % ---
+            # Loss Ratio % = (Importo Liquidato Cumulato al tempo t / Premio Netto Totale Emesso) * 100
+            df_full['Loss_Ratio'] = (df_full['Cum_Liquidato'] / df_full['Tot_Premio_Netto'].replace(0, np.nan)) * 100
+            df_full['Loss_Ratio'] = df_full['Loss_Ratio'].fillna(0) # Evita NaN per divisioni su 0 premio
+
+            # Creiamo la Serie Combinata e la Pivotata
             df_full['Serie'] = df_full['Gruppo'] + " - " + df_full['Ramo']
+            df_pivot = df_full.pivot(index='t_sviluppo', columns='Serie', values='Loss_Ratio').fillna(0)
 
-            # Pivot Table (Righe: Anno t, Colonne: Serie, Valori: Importo Cumulato)
-            df_pivot = df_full.pivot(index='t_sviluppo', columns='Serie', values='Cum_Liquidato').fillna(0)
-
-            # --- 1. RENDERING GRAFICO PLOTLY (CON DOWNLOAD IMMAGINE PNG) ---
-            st.markdown("#### 📈 Sviluppo Cumulato Importi Liquidati (€)")
+            # --- 1. GRAFICO PLOTLY CON DOWNLOAD ---
+            st.markdown("#### 📈 Sviluppo Loss Ratio Cumulato (%)")
 
             color_map = {
-                'Target - DANNI': '#007A33',        # Verde HDI
-                'Target - VITA': '#C8102E',         # Rosso HDI
+                'Target - DANNI': '#007A33',         # Verde HDI Scuro
+                'Target - VITA': '#C8102E',          # Rosso HDI Scuro
                 f'{label_bench} - DANNI': '#80BCA1', # Verde Chiaro
                 f'{label_bench} - VITA': '#E38796'   # Rosso Chiaro
             }
@@ -158,7 +208,7 @@ def render_analisi_sinistri(conn):
             fig = go.Figure()
 
             for col in df_pivot.columns:
-                color = color_map.get(col, '#6B7280')
+                color = color_map.get(col, '#6B7280') # Grigio Fallback
                 fig.add_trace(go.Scatter(
                     x=df_pivot.index,
                     y=df_pivot[col],
@@ -166,12 +216,12 @@ def render_analisi_sinistri(conn):
                     name=col,
                     line=dict(color=color, width=3),
                     marker=dict(size=7),
-                    hovertemplate='<b>' + col + '</b><br>Anno t: %{x}<br>Liquidato: € %{y:,.2f}<extra></extra>'
+                    hovertemplate='<b>' + col + '</b><br>Anno t: %{x}<br>Loss Ratio: %{y:,.2f}%<extra></extra>'
                 ))
 
             fig.update_layout(
                 xaxis_title="Anno di Sviluppo (t)",
-                yaxis_title="Importo Liquidato Cumulato (€)",
+                yaxis_title="Loss Ratio (%)",
                 xaxis=dict(tickmode='linear', tick0=0, dtick=1),
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
                 margin=dict(l=20, r=20, t=30, b=30),
@@ -181,7 +231,7 @@ def render_analisi_sinistri(conn):
                 height=420
             )
 
-            # Render con pulsante di download PNG nativo in alto a destra nel grafico
+            # Il Download nativo in PNG è gestito dalle opzioni 'config' del plotly chart
             st.plotly_chart(
                 fig, 
                 use_container_width=True,
@@ -189,7 +239,7 @@ def render_analisi_sinistri(conn):
                     'displayModeBar': True,
                     'toImageButtonOptions': {
                         'format': 'png',
-                        'filename': f'sviluppo_sinistri_{gen_target}_{contr_target}',
+                        'filename': f'loss_ratio_{gen_target}_{contr_target}',
                         'height': 600,
                         'width': 1000,
                         'scale': 2
@@ -197,12 +247,12 @@ def render_analisi_sinistri(conn):
                 }
             )
 
-            # --- 2. TABELLA MATRICE DI SVILUPPO E DOWNLOAD CSV ---
+            # --- 2. TABELLA LOSS RATIO E DOWNLOAD CSV ---
             col_titolo, col_dl = st.columns([3, 1])
             with col_titolo:
-                st.markdown("#### 🧮 Matrice Sviluppo Cumulato (€)")
+                st.markdown("#### 🧮 Matrice Loss Ratio (%)")
             
-            # Trasponiamo per avere le Serie nelle righe e gli Anni t nelle colonne
+            # Righe = Serie, Colonne = Anno (t)
             df_matrix = df_pivot.T
             df_matrix.columns = [f"Anno {int(c)}" for c in df_matrix.columns]
 
@@ -211,19 +261,19 @@ def render_analisi_sinistri(conn):
                 st.download_button(
                     label="📥 Scarica CSV Tabella",
                     data=csv_data,
-                    file_name=f"matrice_sviluppo_{gen_target}_{contr_target}.csv",
+                    file_name=f"matrice_loss_ratio_{gen_target}_{contr_target}.csv",
                     mime="text/csv",
                     type="primary",
                     use_container_width=True
                 )
 
-            # Formatting Valuta
+            # Formattazione per la visualizzazione Streamlit
             col_config = {
-                col: st.column_config.NumberColumn(col, format="€ %,.2f") 
+                col: st.column_config.NumberColumn(col, format="%.2f %%") 
                 for col in df_matrix.columns
             }
             
             st.dataframe(df_matrix, use_container_width=True, column_config=col_config)
 
         except Exception as e:
-            st.error(f"⚠️ Errore durante l'aggregazione dello sviluppo sinistri: {e}")
+            st.error(f"⚠️ Errore durante l'aggregazione del Loss Ratio: {e}")
