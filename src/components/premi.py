@@ -70,18 +70,18 @@ def render_analisi_premi(conn):
             df_pivot['Totale Generale'] = df_pivot.sum(axis=1)
 
             # --- 1. VISUALIZZAZIONE GRAFICA ---
-            st.markdown("<div class='metric-card'><h4>📈 Andamento Storico</h4></div>", unsafe_allow_html=True)
+            #st.markdown("<div class='metric-card'><h4>📈 Andamento Storico</h4></div>", unsafe_allow_html=True)
             
             # Prepariamo i dati per il grafico (escludiamo il Totale Generale per non sballare le proporzioni)
             df_chart = df_pivot.drop(columns=['Totale Generale'], errors='ignore')
             
             # Streamlit bar_chart nativo: interattivo, raggruppato e zero sbattimenti
-            st.bar_chart(df_chart, use_container_width=True)
+            st.bar_chart(df_chart,stack = False, use_container_width=True)
 
             # --- 2. TABELLA PIVOT NAVIGABILE ---
             col_titolo, col_download = st.columns([3, 1])
             with col_titolo:
-                st.markdown("<div class='metric-card'><h4>🧮 Tabella Dati (Pivot)</h4></div>", unsafe_allow_html=True)
+                st.markdown("<div class='metric-card'><h4>🧮 Tabella Dati </h4></div>", unsafe_allow_html=True)
             with col_download:
                 # Generazione CSV al volo
                 csv_data = df_pivot.reset_index().to_csv(index=False, sep=';', decimal=',').encode('utf-8')
@@ -102,7 +102,7 @@ def render_analisi_premi(conn):
             for col in df_pivot.columns:
                 col_config[col] = st.column_config.NumberColumn(
                     col,
-                    format="€ %.2f", # Formatta con il simbolo Euro e 2 decimali
+                    format="€ ,.2f", # Formatta con il simbolo Euro e 2 decimali
                     step=1
                 )
 
