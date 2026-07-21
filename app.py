@@ -172,7 +172,7 @@ else:
             st.session_state["db_conn"] = None
             st.rerun()
             
-    st.title("📊 Dashboard Credit Protection")
+    st.title("Dashboard Credit Protection")
     
     conn = ottieni_connessione()
     

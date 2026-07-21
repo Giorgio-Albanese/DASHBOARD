@@ -138,141 +138,142 @@ def render_db_navigator(conn):
     # =========================================================================
     # 1. CONFIGURAZIONE FILTRI
     # =========================================================================
-    st.markdown('<div class="hdi-card"><h3>🎛️ Filtri di Estrazione</h3></div>', unsafe_allow_html=True)
-    
-    col_pulsanti_top_1, col_pulsanti_top_2, col_spazio_dx = st.columns([1.5, 1.5, 7])
-    with col_pulsanti_top_1:
-        if st.button("➕ Aggiungi filtro", type="primary", use_container_width=True):
-            st.session_state["filtro_id_counter"] += 1
-            st.session_state["lista_filtri"].append({
-                "id": st.session_state["filtro_id_counter"],
-                "colonna": elenco_colonne[0],
-                "operatore": "Uguale a",
-                "valore": "",
-                "tipo_data": "Solo Anno"
-            })
-            st.rerun()
-            
-    with col_pulsanti_top_2:
-        if st.button("🗑️ Rimuovi tutti", type="secondary", use_container_width=True):
-            st.session_state["lista_filtri"] = []
-            st.session_state["lista_filtri_applicati"] = []
-            st.session_state["step_righe"] = 10
-            st.session_state["genera_download"] = False
-            st.rerun()
-
-    indici_da_rimuovere = []
-    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-
-    for i, filtro in enumerate(st.session_state["lista_filtri"]):
-        f_id = filtro["id"]
-        col_f1, col_f2, col_f3, col_f4 = st.columns([4, 2, 4, 1])
+    with st.container(border=True):
+        st.markdown("### Filtri di Estrazione")
         
-        with col_f1:
-            tipo_dato = metadati[filtro["colonna"]]
-            colonna_precedente = filtro["colonna"]
+        col_pulsanti_top_1, col_pulsanti_top_2, col_spazio_dx = st.columns([1.5, 1.5, 7])
+        with col_pulsanti_top_1:
+            if st.button("➕ Aggiungi filtro", type="primary", use_container_width=True):
+                st.session_state["filtro_id_counter"] += 1
+                st.session_state["lista_filtri"].append({
+                    "id": st.session_state["filtro_id_counter"],
+                    "colonna": elenco_colonne[0],
+                    "operatore": "Uguale a",
+                    "valore": "",
+                    "tipo_data": "Solo Anno"
+                })
+                st.rerun()
+                
+        with col_pulsanti_top_2:
+            if st.button("🗑️ Rimuovi tutti", type="secondary", use_container_width=True):
+                st.session_state["lista_filtri"] = []
+                st.session_state["lista_filtri_applicati"] = []
+                st.session_state["step_righe"] = 10
+                st.session_state["genera_download"] = False
+                st.rerun()
+
+        indici_da_rimuovere = []
+        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+
+        for i, filtro in enumerate(st.session_state["lista_filtri"]):
+            f_id = filtro["id"]
+            col_f1, col_f2, col_f3, col_f4 = st.columns([4, 2, 4, 1])
             
-            if tipo_dato == "DATE":
-                sub_col1, sub_col2 = st.columns([1, 1])
-                with sub_col1:
+            with col_f1:
+                tipo_dato = metadati[filtro["colonna"]]
+                colonna_precedente = filtro["colonna"]
+                
+                if tipo_dato == "DATE":
+                    sub_col1, sub_col2 = st.columns([1, 1])
+                    with sub_col1:
+                        filtro["colonna"] = st.selectbox(
+                            f"Colonna##{f_id}", elenco_colonne, 
+                            index=elenco_colonne.index(filtro["colonna"]), 
+                            label_visibility="collapsed", key=f"col_{f_id}"
+                        )
+                    with sub_col2:
+                        filtro["tipo_data"] = st.selectbox(
+                            f"TipoData##{f_id}", ["Solo Anno", "Data Intera"],
+                            index=0 if filtro.get("tipo_data", "Solo Anno") == "Solo Anno" else 1,
+                            key=f"tg_{f_id}",
+                            label_visibility="collapsed"
+                        )
+                else:
                     filtro["colonna"] = st.selectbox(
                         f"Colonna##{f_id}", elenco_colonne, 
                         index=elenco_colonne.index(filtro["colonna"]), 
                         label_visibility="collapsed", key=f"col_{f_id}"
                     )
-                with sub_col2:
-                    filtro["tipo_data"] = st.selectbox(
-                        f"TipoData##{f_id}", ["Solo Anno", "Data Intera"],
-                        index=0 if filtro.get("tipo_data", "Solo Anno") == "Solo Anno" else 1,
-                        key=f"tg_{f_id}",
-                        label_visibility="collapsed"
-                    )
-            else:
-                filtro["colonna"] = st.selectbox(
-                    f"Colonna##{f_id}", elenco_colonne, 
-                    index=elenco_colonne.index(filtro["colonna"]), 
-                    label_visibility="collapsed", key=f"col_{f_id}"
+                
+                if filtro["colonna"] != colonna_precedente:
+                    filtro["valore"] = ""
+                    tipo_nuovo = metadati[filtro["colonna"]]
+                    if tipo_nuovo == "DATE":
+                        filtro["tipo_data"] = "Solo Anno"
+                    st.rerun()
+            
+            if tipo_dato == "TEXT": opzioni_operatori = ["Uguale a", "Diverso da", "Contiene", "Inizia con", "Incluso in (lista, sep. da virgola)"]
+            elif tipo_dato == "NUMERIC": opzioni_operatori = ["Uguale a", "Diverso da", "Maggiore di (>)", "Minore di (<)", "Dal (>=)", "Fino al (<=)"]
+            elif tipo_dato == "DATE": opzioni_operatori = ["Uguale a", "Diverso da", "Dopo il (>)", "Prima del (<)", "Dal (>=)", "Fino al (<=)"] if filtro.get("tipo_data", "Solo Anno") == "Solo Anno" else ["Uguale a", "Dopo la data (>)", "Prima della data (<)", "Dalla data (>=)", "Fino alla data (<=)"]
+
+            with col_f2:
+                idx_op = opzioni_operatori.index(filtro["operatore"]) if filtro["operatore"] in opzioni_operatori else 0
+                filtro["operatore"] = st.selectbox(
+                    f"Operatore##{f_id}", opzioni_operatori, 
+                    index=idx_op, label_visibility="collapsed", key=f"op_{f_id}"
                 )
-            
-            if filtro["colonna"] != colonna_precedente:
-                filtro["valore"] = ""
-                tipo_nuovo = metadati[filtro["colonna"]]
-                if tipo_nuovo == "DATE":
-                    filtro["tipo_data"] = "Solo Anno"
-                st.rerun()
-        
-        if tipo_dato == "TEXT": opzioni_operatori = ["Uguale a", "Diverso da", "Contiene", "Inizia con", "Incluso in (lista, sep. da virgola)"]
-        elif tipo_dato == "NUMERIC": opzioni_operatori = ["Uguale a", "Diverso da", "Maggiore di (>)", "Minore di (<)", "Dal (>=)", "Fino al (<=)"]
-        elif tipo_dato == "DATE": opzioni_operatori = ["Uguale a", "Diverso da", "Dopo il (>)", "Prima del (<)", "Dal (>=)", "Fino al (<=)"] if filtro.get("tipo_data", "Solo Anno") == "Solo Anno" else ["Uguale a", "Dopo la data (>)", "Prima della data (<)", "Dalla data (>=)", "Fino alla data (<=)"]
-
-        with col_f2:
-            idx_op = opzioni_operatori.index(filtro["operatore"]) if filtro["operatore"] in opzioni_operatori else 0
-            filtro["operatore"] = st.selectbox(
-                f"Operatore##{f_id}", opzioni_operatori, 
-                index=idx_op, label_visibility="collapsed", key=f"op_{f_id}"
-            )
-            
-        with col_f3:
-            if tipo_dato == "TEXT":
-                if filtro["operatore"] in ["Uguale a", "Diverso da"]:
-                    SOGLIA_CARDINALITA = 150
-                    conteggio_unici = ottieni_conteggio_univoci(filtro["colonna"], conn)
-                    if conteggio_unici <= SOGLIA_CARDINALITA:
-                        modalita_disponibili = ottieni_modalita_uniche(filtro["colonna"], conn)
-                        if modalita_disponibili:
-                            val_attuale = str(filtro["valore"])
-                            idx_val = modalita_disponibili.index(val_attuale) if val_attuale in modalita_disponibili else 0
-                            filtro["valore"] = st.selectbox(f"Valore##{f_id}", options=modalita_disponibili, index=idx_val, label_visibility="collapsed", key=f"val_txt_{f_id}")
+                
+            with col_f3:
+                if tipo_dato == "TEXT":
+                    if filtro["operatore"] in ["Uguale a", "Diverso da"]:
+                        SOGLIA_CARDINALITA = 150
+                        conteggio_unici = ottieni_conteggio_univoci(filtro["colonna"], conn)
+                        if conteggio_unici <= SOGLIA_CARDINALITA:
+                            modalita_disponibili = ottieni_modalita_uniche(filtro["colonna"], conn)
+                            if modalita_disponibili:
+                                val_attuale = str(filtro["valore"])
+                                idx_val = modalita_disponibili.index(val_attuale) if val_attuale in modalita_disponibili else 0
+                                filtro["valore"] = st.selectbox(f"Valore##{f_id}", options=modalita_disponibili, index=idx_val, label_visibility="collapsed", key=f"val_txt_{f_id}")
+                            else:
+                                filtro["valore"] = st.text_input(f"Valore##{f_id}", value="", placeholder="Nessun dato...", label_visibility="collapsed", key=f"val_txt_vuoto_{f_id}", disabled=True)
                         else:
-                            filtro["valore"] = st.text_input(f"Valore##{f_id}", value="", placeholder="Nessun dato...", label_visibility="collapsed", key=f"val_txt_vuoto_{f_id}", disabled=True)
+                            filtro["valore"] = st.text_input(f"Valore##{f_id}", value=str(filtro["valore"]), placeholder="Digita valore...", label_visibility="collapsed", key=f"val_txt_input_{f_id}")
+                            st.caption(f"⚡ Alta cardinalità ({conteggio_unici:,} unici). Scrittura libera.")
                     else:
-                        filtro["valore"] = st.text_input(f"Valore##{f_id}", value=str(filtro["valore"]), placeholder="Digita valore...", label_visibility="collapsed", key=f"val_txt_input_{f_id}")
-                        st.caption(f"⚡ Alta cardinalità ({conteggio_unici:,} unici). Scrittura libera.")
-                else:
-                    filtro["valore"] = st.text_input(f"Valore##{f_id}", value=str(filtro["valore"]), placeholder="Cerca pattern...", label_visibility="collapsed", key=f"val_txt_input_{f_id}")
-            elif tipo_dato == "NUMERIC":
-                filtro["valore"] = st.text_input(f"Valore##{f_id}", value=str(filtro["valore"]), placeholder="Numero...", label_visibility="collapsed", key=f"val_num_{f_id}")
-            elif tipo_dato == "DATE":
-                if filtro.get("tipo_data", "Solo Anno") == "Solo Anno":
-                    anni_disponibili = ottieni_anni_univoci(filtro["colonna"], conn)
-                    try:
-                        val_init = int(filtro["valore"])
-                        idx_anno = anni_disponibili.index(val_init) if val_init in anni_disponibili else 0
-                    except ValueError:
-                        idx_anno = 0
-                    filtro["valore"] = str(st.selectbox(f"Anno##{f_id}", options=anni_disponibili, index=idx_anno, label_visibility="collapsed", key=f"val_anno_{f_id}"))
-                else:
-                    val_init_date = datetime.date.today()
-                    if filtro["valore"]:
-                        try: val_init_date = pd.to_datetime(filtro["valore"]).date()
-                        except Exception: pass
-                    data_scelta = st.date_input(f"Data##{f_id}", value=val_init_date, label_visibility="collapsed", key=f"val_data_{f_id}")
-                    filtro["valore"] = data_scelta.strftime("%Y-%m-%d")
-            
-        with col_f4:
-            if st.button("🗑️", key=f"del_{f_id}", help="Elimina riga", type="secondary", use_container_width=True):
-                indici_da_rimuovere.append(i)
+                        filtro["valore"] = st.text_input(f"Valore##{f_id}", value=str(filtro["valore"]), placeholder="Cerca pattern...", label_visibility="collapsed", key=f"val_txt_input_{f_id}")
+                elif tipo_dato == "NUMERIC":
+                    filtro["valore"] = st.text_input(f"Valore##{f_id}", value=str(filtro["valore"]), placeholder="Numero...", label_visibility="collapsed", key=f"val_num_{f_id}")
+                elif tipo_dato == "DATE":
+                    if filtro.get("tipo_data", "Solo Anno") == "Solo Anno":
+                        anni_disponibili = ottieni_anni_univoci(filtro["colonna"], conn)
+                        try:
+                            val_init = int(filtro["valore"])
+                            idx_anno = anni_disponibili.index(val_init) if val_init in anni_disponibili else 0
+                        except ValueError:
+                            idx_anno = 0
+                        filtro["valore"] = str(st.selectbox(f"Anno##{f_id}", options=anni_disponibili, index=idx_anno, label_visibility="collapsed", key=f"val_anno_{f_id}"))
+                    else:
+                        val_init_date = datetime.date.today()
+                        if filtro["valore"]:
+                            try: val_init_date = pd.to_datetime(filtro["valore"]).date()
+                            except Exception: pass
+                        data_scelta = st.date_input(f"Data##{f_id}", value=val_init_date, label_visibility="collapsed", key=f"val_data_{f_id}")
+                        filtro["valore"] = data_scelta.strftime("%Y-%m-%d")
+                
+            with col_f4:
+                if st.button("🗑️", key=f"del_{f_id}", help="Elimina riga", type="secondary", use_container_width=True):
+                    indici_da_rimuovere.append(i)
 
-    if indici_da_rimuovere:
-        for idx in sorted(indici_da_rimuovere, reverse=True):
-            st.session_state["lista_filtri"].pop(idx)
-        st.rerun()
-
-    ha_modifiche_pendenti = (st.session_state["lista_filtri"] != st.session_state["lista_filtri_applicati"])
-    st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
-    
-    col_applica, col_stato, col_spazio_app = st.columns([1.5, 4, 4.5])
-    with col_applica:
-        if st.button("⚡ Applica Filtri", type="primary" if ha_modifiche_pendenti else "secondary", use_container_width=True):
-            st.session_state["lista_filtri_applicati"] = copy.deepcopy(st.session_state["lista_filtri"])
-            st.session_state["genera_download"] = False # Reset status download
+        if indici_da_rimuovere:
+            for idx in sorted(indici_da_rimuovere, reverse=True):
+                st.session_state["lista_filtri"].pop(idx)
             st.rerun()
-            
-    with col_stato:
-        if ha_modifiche_pendenti:
-            st.warning("⚠️ Modifiche pendenti da applicare.")
-        else:
-            st.success("✅ Filtri sincronizzati con il database.")
+
+        ha_modifiche_pendenti = (st.session_state["lista_filtri"] != st.session_state["lista_filtri_applicati"])
+        st.markdown("<div style='margin-top: 15px;'></div>", unsafe_allow_html=True)
+        
+        col_applica, col_stato, col_spazio_app = st.columns([1.5, 4, 4.5])
+        with col_applica:
+            if st.button("⚡ Applica Filtri", type="primary" if ha_modifiche_pendenti else "secondary", use_container_width=True):
+                st.session_state["lista_filtri_applicati"] = copy.deepcopy(st.session_state["lista_filtri"])
+                st.session_state["genera_download"] = False 
+                st.rerun()
+                
+        with col_stato:
+            if ha_modifiche_pendenti:
+                st.warning("⚠️ Modifiche pendenti da applicare.")
+            else:
+                st.success("✅ Filtri sincronizzati con il database.")
 
     # =========================================================================
     # 2. COSTRUZIONE DELLE CLAUSOLE SQL
@@ -333,139 +334,133 @@ def render_db_navigator(conn):
     # =========================================================================
     # 3. PREVIEW DATI
     # =========================================================================
-    st.markdown('<div class="hdi-card"><h3>👀 Preview e Download</h3></div>', unsafe_allow_html=True)
-    if totale_righe > 0:
-        
-        lista_badges = []
-        for f in st.session_state["lista_filtri_applicati"]:
-            valore_filtro = f.get("valore", "").strip()
-            if valore_filtro:
-                col_name = f["colonna"]
-                op_label = f["operatore"].lower()
-                
-                if metadati[col_name] == "DATE" and f.get("tipo_data") == "Solo Anno":
-                    testo_badge = f"📅 Anno({col_name}) {op_label} {valore_filtro}"
-                elif metadati[col_name] == "DATE":
-                    testo_badge = f"📅 {col_name} {op_label} {valore_filtro}"
-                elif metadati[col_name] == "NUMERIC":
-                    testo_badge = f"🔢 {col_name} {op_label} {valore_filtro}"
-                else:
-                    testo_badge = f"🔤 {col_name} {op_label} '{valore_filtro}'"
+    with st.container(border=True):
+        st.markdown("### Preview e Download")
+        if totale_righe > 0:
+            lista_badges = []
+            for f in st.session_state["lista_filtri_applicati"]:
+                valore_filtro = f.get("valore", "").strip()
+                if valore_filtro:
+                    col_name = f["colonna"]
+                    op_label = f["operatore"].lower()
                     
-                html_badge = f"""
-                <span style="background-color: #E6F2EB; color: #005F26; padding: 6px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; border: 1px solid #C2E0CC;">{testo_badge}</span>
-                """
-                lista_badges.append(html_badge)
-        
-        if lista_badges:
-            st.markdown("**Filtri applicati:**")
-            st.markdown(f'<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px;">{"".join(lista_badges)}</div>', unsafe_allow_html=True)
+                    if metadati[col_name] == "DATE" and f.get("tipo_data") == "Solo Anno":
+                        testo_badge = f"📅 Anno({col_name}) {op_label} {valore_filtro}"
+                    elif metadati[col_name] == "DATE":
+                        testo_badge = f"📅 {col_name} {op_label} {valore_filtro}"
+                    elif metadati[col_name] == "NUMERIC":
+                        testo_badge = f"🔢 {col_name} {op_label} {valore_filtro}"
+                    else:
+                        testo_badge = f"🔤 {col_name} {op_label} '{valore_filtro}'"
+                        
+                    html_badge = f"""
+                    <span style="background-color: #E6F2EB; color: #005F26; padding: 6px 14px; border-radius: 20px; font-size: 0.8rem; font-weight: 600; border: 1px solid #C2E0CC;">{testo_badge}</span>
+                    """
+                    lista_badges.append(html_badge)
+            
+            if lista_badges:
+                st.markdown("**Filtri applicati:**")
+                st.markdown(f'<div style="display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px;">{"".join(lista_badges)}</div>', unsafe_allow_html=True)
 
-        col_info_view, col_dl = st.columns([3, 1])
-        with col_info_view:
-            righe_mostrate = min(st.session_state["step_righe"], totale_righe)
-            st.caption(f"Mostrate {righe_mostrate:,} righe di anteprima su {totale_righe:,} record totali.")
-            
-        with col_dl:
-            query_completa = f"SELECT * FROM vista_polizze{stringa_where_completa}"
-            
-            # --- OTTIMIZZAZIONE 4: DEFERRED CSV GENERATION ---
-        
-            @st.cache_data(ttl=60)
-            def genera_csv(query):
-                df_download = conn.execute(query).df()
-                # Aggiungiamo sep=';' e decimal=',' per l'export in stile italiano
-                return df_download.to_csv(index=False, sep=';', decimal=',').encode('utf-8')
-            
-            if st.session_state.get("genera_download", False):
-                with st.spinner("Creazione CSV in corso..."):
-                    csv_data = genera_csv(query_completa)
+            col_info_view, col_dl = st.columns([3, 1])
+            with col_info_view:
+                righe_mostrate = min(st.session_state["step_righe"], totale_righe)
+                st.caption(f"Mostrate {righe_mostrate:,} righe di anteprima su {totale_righe:,} record totali.")
                 
-                st.download_button(
-                    label="📥 Salva file (Pronto)",
-                    data=csv_data,
-                    file_name="estrazione_filtrata.csv",
-                    mime="text/csv",
-                    type="primary",
-                    use_container_width=True
+            with col_dl:
+                query_completa = f"SELECT * FROM vista_polizze{stringa_where_completa}"
+            
+                @st.cache_data(ttl=60)
+                def genera_csv(query):
+                    df_download = conn.execute(query).df()
+                    return df_download.to_csv(index=False, sep=';', decimal=',').encode('utf-8')
+                
+                if st.session_state.get("genera_download", False):
+                    with st.spinner("Creazione CSV in corso..."):
+                        csv_data = genera_csv(query_completa)
+                    
+                    st.download_button(
+                        label="📥 Salva file (Pronto)",
+                        data=csv_data,
+                        file_name="estrazione_filtrata.csv",
+                        mime="text/csv",
+                        type="primary",
+                        use_container_width=True
+                    )
+                else:
+                    if st.button("⚙️ Prepara Download", use_container_width=True):
+                        st.session_state["genera_download"] = True
+                        st.rerun()
+
+            query_anteprima = f"SELECT * FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
+            df_preview = conn.execute(query_anteprima).df()
+            
+            column_config = {}
+            colonne_float = df_preview.select_dtypes(include=['float64', 'float32']).columns.tolist()
+            
+            for col in colonne_float:
+                column_config[col] = st.column_config.NumberColumn(
+                    col,
+                    format="%.2f"
                 )
-            else:
-                if st.button("⚙️ Prepara Download", use_container_width=True):
-                    st.session_state["genera_download"] = True
-                    st.rerun()
-
-        query_anteprima = f"SELECT * FROM vista_polizze{stringa_where_completa} LIMIT {st.session_state['step_righe']}"
-        df_preview = conn.execute(query_anteprima).df()
-        
-# --- NUOVO CODICE (PIÙ ROBUSTO) ---
-        # Configurazione nativa di Streamlit per i numeri
-        column_config = {}
-        colonne_float = df_preview.select_dtypes(include=['float64', 'float32']).columns.tolist()
-        
-        for col in colonne_float:
-            column_config[col] = st.column_config.NumberColumn(
-                col,
-                format="%.2f" # Format specificato nativamente
+            
+            st.dataframe(
+                df_preview, 
+                use_container_width=True,
+                column_config=column_config
             )
-        
-        # Rendering diretto del dataframe (senza Styler)
-        st.dataframe(
-            df_preview, 
-            use_container_width=True,
-            column_config=column_config
-        )
-        
-        if st.session_state["step_righe"] < totale_righe:
-            if st.button("🔽 Mostra altre 10 righe", use_container_width=True):
-                st.session_state["step_righe"] += 10
-                st.rerun()
-    else:
-        st.warning("Nessun record da mostrare con i filtri applicati.")
+            
+            if st.session_state["step_righe"] < totale_righe:
+                if st.button("🔽 Mostra altre 10 righe", use_container_width=True):
+                    st.session_state["step_righe"] += 10
+                    st.rerun()
+        else:
+            st.warning("Nessun record da mostrare con i filtri applicati.")
 
-# =========================================================================
+    # =========================================================================
     # 4. REPORT TABELLARE DI SINTESI
     # =========================================================================
-    st.markdown('<div class="hdi-card"><h3>📈 Statistiche di Sintesi</h3></div>', unsafe_allow_html=True)
-    if totale_righe == 0:
-        st.warning("Nessun dato disponibile.")
-    elif not colonne_numeriche:
-        st.info("Nessuna colonna numerica rilevata.")
-    else:
-        colonne_stats_scelte = st.multiselect(
-            "Seleziona i campi numerici da analizzare:",
-            options=colonne_numeriche,
-            default=colonne_numeriche[:3] if len(colonne_numeriche) > 3 else colonne_numeriche
-        )
-        
-        if colonne_stats_scelte:
-            pezzi_query = []
-            for col in colonne_stats_scelte:
-                pezzi_query.append(f"""
-                    SELECT 
-                        '{col}' AS "Variabile Finanziaria", 
-                        SUM({col}) AS SOMMA, 
-                        AVG({col}) AS MEDIA, 
-                        MAX({col}) AS MASSIMO, 
-                        MIN({col}) AS MINIMO 
-                    FROM vista_polizze{stringa_where_completa}
-                """)
+    with st.container(border=True):
+        st.markdown("### Statistiche di Sintesi")
+        if totale_righe == 0:
+            st.warning("Nessun dato disponibile.")
+        elif not colonne_numeriche:
+            st.info("Nessuna colonna numerica rilevata.")
+        else:
+            colonne_stats_scelte = st.multiselect(
+                "Seleziona i campi numerici da analizzare:",
+                options=colonne_numeriche,
+                default=colonne_numeriche[:3] if len(colonne_numeriche) > 3 else colonne_numeriche
+            )
             
-            query_pivot_completa = " UNION ALL ".join(pezzi_query)
-            
-            try:
-                df_stats = conn.execute(query_pivot_completa).df()
+            if colonne_stats_scelte:
+                pezzi_query = []
+                for col in colonne_stats_scelte:
+                    pezzi_query.append(f"""
+                        SELECT 
+                            '{col}' AS "Variabile Finanziaria", 
+                            SUM({col}) AS SOMMA, 
+                            AVG({col}) AS MEDIA, 
+                            MAX({col}) AS MASSIMO, 
+                            MIN({col}) AS MINIMO 
+                        FROM vista_polizze{stringa_where_completa}
+                    """)
                 
-                # Configurazione automatica dei separatori e dell'Euro per tutte le colonne metriche
-                col_config_stats = {
-                    metric: st.column_config.NumberColumn(metric, format="€ %,.2f")
-                    for metric in ["SOMMA", "MEDIA", "MASSIMO", "MINIMO"]
-                }
+                query_pivot_completa = " UNION ALL ".join(pezzi_query)
                 
-                st.dataframe(
-                    df_stats, 
-                    column_config=col_config_stats, 
-                    use_container_width=True, 
-                    hide_index=True
-                )
-            except Exception as e:
-                st.error(f"Errore durante il calcolo delle statistiche: {e}")
+                try:
+                    df_stats = conn.execute(query_pivot_completa).df()
+                    
+                    col_config_stats = {
+                        metric: st.column_config.NumberColumn(metric, format="€ %,.2f")
+                        for metric in ["SOMMA", "MEDIA", "MASSIMO", "MINIMO"]
+                    }
+                    
+                    st.dataframe(
+                        df_stats, 
+                        column_config=col_config_stats, 
+                        use_container_width=True, 
+                        hide_index=True
+                    )
+                except Exception as e:
+                    st.error(f"Errore durante il calcolo delle statistiche: {e}")

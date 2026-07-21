@@ -11,34 +11,44 @@ def costruisci_campo_data_safe(colonna):
     ) AS DATE)"""
 
 def render_analisi_premi(conn):
-    st.markdown("""
-        <style>
-        .metric-card {
-            background-color: white;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #E5E7EB;
-            border-left: 4px solid #007A33;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-            margin-bottom: 20px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    st.markdown("### Analisi Premi per Generazione e Ramo")
+    #st.markdown("Analisi dei volumi di **Premio Netto** aggregati per Ramo (Danni/Vita) e Anno di Effetto della polizza.")
+    st.markdown("")
 
-    st.markdown("### 💰 Analisi Premi per Generazione e Ramo")
-    st.markdown("Analisi dei volumi di **Premio Netto** aggregati per Ramo (Danni/Vita) e Anno di Effetto della polizza.")
+    # --- ESTRAZIONE CONTRAENTI DISPONIBILI ---
+    try:
+        query_contraenti = """
+            SELECT DISTINCT COALESCE(CONTRAENTE, 'SCONOSCIUTO') AS Contraente 
+            FROM vista_polizze 
+            WHERE CONTRAENTE IS NOT NULL 
+            ORDER BY Contraente
+        """
+        df_contraenti = conn.execute(query_contraenti).df()
+        lista_contraenti = ["Tutti i Contraenti"] + sorted(df_contraenti['Contraente'].tolist())
+    except Exception:
+        lista_contraenti = ["Tutti i Contraenti"]
+
+    # --- PANNELLO FILTRI NATIVO ---
+    with st.container(border=True):
+        st.markdown("##### Seleziona Contraente")
+        contraente_scelto = st.selectbox("Seleziona Contraente", lista_contraenti, label_visibility="collapsed")
 
     with st.spinner("Aggregazione dati in corso..."):
         campo_data_sicuro = costruisci_campo_data_safe("DATAEFFETTO")
         
+        # Costruzione dinamica della clausola WHERE per il contraente
+        where_cond = "DATAEFFETTO IS NOT NULL AND PREMI_NETTO IS NOT NULL"
+        if contraente_scelto != "Tutti i Contraenti":
+            contraente_safe = str(contraente_scelto).replace("'", "''")
+            where_cond += f" AND COALESCE(CONTRAENTE, 'SCONOSCIUTO') = '{contraente_safe}'"
+
         query = f"""
             SELECT 
                 YEAR({campo_data_sicuro}) AS Anno_Effetto,
                 UPPER(CAST(RAMO AS VARCHAR)) AS Ramo,
                 SUM(CAST(PREMI_NETTO AS DOUBLE)) AS Totale_Premio_Netto
             FROM vista_polizze
-            WHERE DATAEFFETTO IS NOT NULL 
-              AND PREMI_NETTO IS NOT NULL
+            WHERE {where_cond}
             GROUP BY Anno_Effetto, Ramo
             HAVING Anno_Effetto IS NOT NULL
             ORDER BY Anno_Effetto DESC
@@ -48,7 +58,7 @@ def render_analisi_premi(conn):
             df_aggregato = conn.execute(query).df()
             
             if df_aggregato.empty:
-                st.warning("Nessun dato valido trovato per l'analisi.")
+                st.warning("Nessun dato valido trovato per i filtri selezionati.")
                 return
 
             # Filtriamo gli anni di interesse
@@ -67,8 +77,6 @@ def render_analisi_premi(conn):
             df_pivot['Totale Generale'] = df_pivot.sum(axis=1)
 
             # --- 1. VISUALIZZAZIONE GRAFICA NATIVA STREAMLIT ---
-            #st.markdown("<div class='metric-card'><h4>📈 Andamento Storico</h4></div>", unsafe_allow_html=True)
-            
             df_chart = df_pivot.drop(columns=['Totale Generale'], errors='ignore')
             
             # Assegniamo in modo dinamico Verde a DANNI e Rosso a VITA
@@ -89,15 +97,14 @@ def render_analisi_premi(conn):
             )
 
             # --- 2. TABELLA PIVOT NAVIGABILE ---
-            col_titolo, col_download = st.columns([3, 1])
-            with col_titolo:
-                st.markdown("<div class='metric-card'><h4>🧮 Tabella Dati </h4></div>", unsafe_allow_html=True)
+            _, col_download = st.columns([3, 1])
             with col_download:
+                suffix_file = f"_contraente_{str(contraente_scelto).replace(' ', '_').replace('/', '_')}" if contraente_scelto != "Tutti i Contraenti" else "_totale_portafoglio"
                 csv_data = df_pivot.reset_index().to_csv(index=False, sep=';', decimal=',').encode('utf-8')
                 st.download_button(
                     label="📥 Scarica CSV",
                     data=csv_data,
-                    file_name="premi_per_generazione.csv",
+                    file_name=f"premi_per_generazione{suffix_file}.csv",
                     mime="text/csv",
                     type="primary",
                     use_container_width=True

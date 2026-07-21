@@ -13,22 +13,9 @@ def costruisci_campo_data_safe(colonna):
     ) AS DATE)"""
 
 def render_analisi_sinistri(conn):
-    # st.markdown("""
-    #     <style>
-    #     .metric-card-sinistri {
-    #         background-color: white;
-    #         padding: 15px;
-    #         border-radius: 8px;
-    #         border: 1px solid #E5E7EB;
-    #         border-left: 4px solid #C8102E;
-    #         box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-    #         margin-bottom: 20px;
-    #     }
-    #     </style>
-    # """, unsafe_allow_html=True)
-
-    #st.markdown("### 🚨 Claim Velocity")
-    #st.markdown("Analisi dell'incisività dei sinistri: quanto velocemente la coorte sviluppa un **Loss Ratio %** (Importo Liquidato Cumulato / Denominatore Premi del subset) nei primi 10 anni dalla messa in copertura.")
+    st.markdown("### Analisi Sviluppo Portafoglio")
+    #st.markdown("Monitoraggio dell'incisività dei sinistri e sviluppo del Loss Ratio Cumulato nei primi 10 anni dalla messa in copertura.")
+    st.markdown("")
 
     # --- SETUP FILTRI ED ESTRAZIONE DIMENSIONI ---
     data_eff_safe = costruisci_campo_data_safe("DATAEFFETTO")
@@ -54,50 +41,58 @@ def render_analisi_sinistri(conn):
         st.warning("Dati insufficienti per generare l'analisi di sviluppo.")
         return
 
-    # --- UI: SCELTA DIMENSIONE E CONFIGURAZIONE COORTI ---
-    st.markdown("<div class='metric-card-sinistri'>", unsafe_allow_html=True)
-    
-    col_dim_scelta, col_toggle_est = st.columns([2, 2])
-    with col_dim_scelta:
-        tipo_analisi = st.radio("Variabile di stratificazione", ["Contraente", "Garanzia"], horizontal=True)
-    with col_toggle_est:
-        st.markdown("<div style='height: 10px;'></div>", unsafe_allow_html=True) # Spaziatura visiva
-        usa_estinzioni = st.toggle("➕ Includi Estinzioni")
-
-    col_dim = "CONTRAENTE" if tipo_analisi == "Contraente" else "GARANZIA"
-    valori_disp = contraenti_disp if tipo_analisi == "Contraente" else garanzie_disp
-
-    st.markdown("---")
-    st.markdown(f"##### 🎯 Target ({tipo_analisi})")
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        gen_target = st.selectbox("Generazione Target (Anno Effetto)", generazioni_disp, key="gen_target")
-    with col2:
-        val_target = st.selectbox(f"{tipo_analisi} Target", valori_disp, key="val_target")
-
-    confronto_attivo = st.toggle("🔄 Confronta", key="toggle_confronto")
-    
-    if confronto_attivo:
-        st.markdown(f"##### ⚖️ Confronto ({tipo_analisi})")
-        col3, col4 = st.columns(2)
-        with col3:
-            gen_bench = st.selectbox("Generazione di Confronto", generazioni_disp, index=1 if len(generazioni_disp) > 1 else 0, key="gen_bench")
-        with col4:
-            val_bench = st.selectbox(f"{tipo_analisi} di Confronto", valori_disp, key="val_bench")
+    # --- PANNELLO DI CONTROLLO NATIVO (RISOLVE IL BUG DEL BOX) ---
+    with st.container(border=True):
+        st.markdown("##### Configurazione Parametri")
         
-        if gen_target == gen_bench and val_target == val_bench:
-            st.warning("⚠️ Hai selezionato lo stesso elemento e la stessa generazione per il confronto. Seleziona parametri differenti.")
-            st.markdown("</div>", unsafe_allow_html=True)
-            return
+        col_c1, col_c2, col_c3 = st.columns([2, 1.5, 1.5])
+        with col_c1:
+            tipo_analisi = st.radio(
+                "Variabile di stratificazione", 
+                ["Contraente", "Garanzia"], 
+                horizontal=True
+            )
+        with col_c2:
+            st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+            usa_estinzioni = st.toggle("Includi Estinzioni")
+        with col_c3:
+            st.markdown("<div style='height: 6px;'></div>", unsafe_allow_html=True)
+            confronto_attivo = st.toggle("Attiva Confronto")
 
-        label_bench = f"Confronto ({gen_bench} - {val_bench})"
-    else:
-        gen_bench = gen_target
-        val_bench = "RESTO_PORTAFOGLIO"
-        label_bench = "Resto Portafoglio"
+        st.divider()
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        col_dim = "CONTRAENTE" if tipo_analisi == "Contraente" else "GARANZIA"
+        valori_disp = contraenti_disp if tipo_analisi == "Contraente" else garanzie_disp
+
+        if confronto_attivo:
+            col_target, col_bench_ui = st.columns(2)
+            with col_target:
+                st.markdown("**Coorte Target**")
+                gen_target = st.selectbox("Generazione Target", generazioni_disp, key="gen_target")
+                val_target = st.selectbox(f"{tipo_analisi} Target", valori_disp, key="val_target")
+            with col_bench_ui:
+                st.markdown("**Coorte di Confronto**")
+                gen_bench = st.selectbox("Generazione di Confronto", generazioni_disp, index=1 if len(generazioni_disp) > 1 else 0, key="gen_bench")
+                val_bench = st.selectbox(f"{tipo_analisi} di Confronto", valori_disp, key="val_bench")
+            
+            if gen_target == gen_bench and val_target == val_bench:
+                st.warning("Selezionare parametri differenti per il confronto tra coorti identiche.")
+                return
+
+            label_bench = f"Confronto ({gen_bench} - {val_bench})"
+        else:
+            col_target, col_info = st.columns(2)
+            with col_target:
+                st.markdown("**Coorte Target**")
+                gen_target = st.selectbox("Generazione Target", generazioni_disp, key="gen_target")
+                val_target = st.selectbox(f"{tipo_analisi} Target", valori_disp, key="val_target")
+            # with col_info:
+            #     st.markdown("**Benchmark di Riferimento**")
+            #     st.info("Confronto automatico attivo con il **Resto del Portafoglio** (esclusa la coorte target).")
+
+            gen_bench = gen_target
+            val_bench = "RESTO_PORTAFOGLIO"
+            label_bench = "Resto Portafoglio"
 
     # --- COSTRUZIONE CONDIZIONI SQL SANITIZZATE ---
     val_target_safe = str(val_target).replace("'", "''")
@@ -162,7 +157,6 @@ def render_analisi_sinistri(conn):
             SELECT * FROM BenchData
         ),
         Denominatore AS (
-            -- Calcoliamo il premio univoco per polizza (evita inflazione se ci sono più righe sinistro per lo stesso ID)
             SELECT 
                 Gruppo, Ramo,
                 SUM(Premio_Netto_Univoco) AS Tot_Premio_Netto
@@ -174,7 +168,6 @@ def render_analisi_sinistri(conn):
             GROUP BY Gruppo, Ramo
         ),
         Numeratore AS (
-            -- Calcoliamo il totale liquidato all'anno t
             SELECT 
                 Gruppo, Ramo, t_sviluppo,
                 SUM(Liquidazione) AS Liquidato_t
@@ -197,41 +190,35 @@ def render_analisi_sinistri(conn):
                 st.info("Nessun dato trovato per le coorti selezionate.")
                 return
 
-            # Creazione della griglia fissa per garantire che le linee traccino da t=0 a t=10 anche per anni vuoti
             grid = pd.MultiIndex.from_product(
                 [['Target', label_bench], ['DANNI', 'VITA'], range(11)],
                 names=['Gruppo', 'Ramo', 't_sviluppo']
             ).to_frame(index=False)
 
-            # Merge dei risultati SQL nella griglia per colmare i "buchi" temporali
             df_full = pd.merge(grid, df_sql, on=['Gruppo', 'Ramo', 't_sviluppo'], how='left').fillna(0)
             
-            # Espansione del Denominatore (Tot_Premio_Netto) su tutti i tempi t
             totali = df_sql[['Gruppo', 'Ramo', 'Tot_Premio_Netto']].replace(0, np.nan).dropna().drop_duplicates()
             if 'Tot_Premio_Netto' in df_full.columns:
                 df_full = df_full.drop(columns=['Tot_Premio_Netto'])
             df_full = pd.merge(df_full, totali, on=['Gruppo', 'Ramo'], how='left')
 
-            # Ordinamento e calcolo Cumulata del Liquidato
             df_full = df_full.sort_values(['Gruppo', 'Ramo', 't_sviluppo'])
             df_full['Cum_Liquidato'] = df_full.groupby(['Gruppo', 'Ramo'])['Liquidato_t'].cumsum()
 
-            # --- CALCOLO LOSS RATIO % ---
             df_full['Loss_Ratio'] = (df_full['Cum_Liquidato'] / df_full['Tot_Premio_Netto'].replace(0, np.nan)) * 100
             df_full['Loss_Ratio'] = df_full['Loss_Ratio'].fillna(0) 
 
-            # Creazione della Serie Combinata e la Pivotata
             df_full['Serie'] = df_full['Gruppo'] + " - " + df_full['Ramo']
             df_pivot = df_full.pivot(index='t_sviluppo', columns='Serie', values='Loss_Ratio').fillna(0)
 
-            # --- 1. GRAFICO PLOTLY CON DOWNLOAD ---
-            st.markdown("#### 📈 Loss Ratio Cumulato (%)")
+            # --- 1. GRAFICO PLOTLY ---
+            st.markdown("#### Sviluppo Loss Ratio Cumulato (%)")
 
             color_map = {
-                'Target - DANNI': '#007A33',         # Verde HDI
-                'Target - VITA': '#C8102E',          # Rosso HDI
-                f'{label_bench} - DANNI': '#80BCA1', # Verde Chiaro
-                f'{label_bench} - VITA': '#E38796'   # Rosso Chiaro
+                'Target - DANNI': '#007A33',         
+                'Target - VITA': '#C8102E',          
+                f'{label_bench} - DANNI': '#80BCA1', 
+                f'{label_bench} - VITA': '#E38796'   
             }
 
             fig = go.Figure()
@@ -275,10 +262,8 @@ def render_analisi_sinistri(conn):
                 }
             )
 
-            # --- 2. TABELLA LOSS RATIO E DOWNLOAD CSV ---
-            col_titolo, col_dl = st.columns([3, 1])
-            with col_titolo:
-                #st.markdown("#### 🧮 Matrice Loss Ratio (%)")
+            # --- 2. TABELLA LOSS RATIO E DOWNLOAD ---
+            _, col_dl = st.columns([3, 1])
             
             df_matrix = df_pivot.T
             df_matrix.columns = [f"Anno {int(c)}" for c in df_matrix.columns]
@@ -287,7 +272,7 @@ def render_analisi_sinistri(conn):
                 csv_data = df_matrix.reset_index().to_csv(index=False, sep=';', decimal=',').encode('utf-8')
                 
                 st.download_button(
-                    label="📥 Scarica CSV Tabella",
+                    label="📥 Scarica CSV",
                     data=csv_data,
                     file_name=f"tabella_{nome_export}.csv",
                     mime="text/csv",
@@ -303,4 +288,4 @@ def render_analisi_sinistri(conn):
             st.dataframe(df_matrix, use_container_width=True, column_config=col_config)
 
         except Exception as e:
-            st.error(f"⚠️ Errore durante l'aggregazione del Loss Ratio: {e}")
+            st.error(f"Errore durante l'aggregazione del Loss Ratio: {e}")
