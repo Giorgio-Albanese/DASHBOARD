@@ -13,22 +13,22 @@ def costruisci_campo_data_safe(colonna):
     ) AS DATE)"""
 
 def render_analisi_sinistri(conn):
-    st.markdown("""
-        <style>
-        .metric-card-sinistri {
-            background-color: white;
-            padding: 15px;
-            border-radius: 8px;
-            border: 1px solid #E5E7EB;
-            border-left: 4px solid #C8102E;
-            box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-            margin-bottom: 20px;
-        }
-        </style>
-    """, unsafe_allow_html=True)
+    # st.markdown("""
+    #     <style>
+    #     .metric-card-sinistri {
+    #         background-color: white;
+    #         padding: 15px;
+    #         border-radius: 8px;
+    #         border: 1px solid #E5E7EB;
+    #         border-left: 4px solid #C8102E;
+    #         box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    #         margin-bottom: 20px;
+    #     }
+    #     </style>
+    # """, unsafe_allow_html=True)
 
-    st.markdown("### 🚨 Loss Ratio Cumulato (Claim Velocity)")
-    st.markdown("Analisi dell'incisività dei sinistri: quanto velocemente la coorte sviluppa un **Loss Ratio %** (Importo Liquidato Cumulato / Totale Premio Netto Emesso del subset) nei primi 10 anni dalla messa in copertura.")
+    st.markdown("### 🚨 Claim Velocity")
+    #st.markdown("Analisi dell'incisività dei sinistri: quanto velocemente la coorte sviluppa un **Loss Ratio %** (Importo Liquidato Cumulato / Totale Premio Netto Emesso del subset) nei primi 10 anni dalla messa in copertura.")
 
     # --- SETUP FILTRI ED ESTRAZIONE DIMENSIONI ---
     data_eff_safe = costruisci_campo_data_safe("DATAEFFETTO")
@@ -55,17 +55,17 @@ def render_analisi_sinistri(conn):
     # --- UI: CONFIGURAZIONE COORTI ---
     st.markdown("<div class='metric-card-sinistri'>", unsafe_allow_html=True)
     
-    st.markdown("##### 🎯 Configurazione Coorte Target")
+    st.markdown("##### 🎯 Target")
     col1, col2 = st.columns(2)
     with col1:
         gen_target = st.selectbox("Generazione Target (Anno Effetto)", generazioni_disp)
     with col2:
         contr_target = st.selectbox("Contraente Target", contraenti_disp)
 
-    confronto_attivo = st.toggle("🔄 Confronta con una coorte specifica (anziché con il resto del portafoglio)")
+    confronto_attivo = st.toggle("🔄")
     
     if confronto_attivo:
-        st.markdown("##### ⚖️ Configurazione Coorte di Confronto")
+        st.markdown("##### ⚖️ Confronto")
         col3, col4 = st.columns(2)
         with col3:
             gen_bench = st.selectbox("Generazione di Confronto", generazioni_disp, index=1 if len(generazioni_disp) > 1 else 0)
@@ -96,6 +96,14 @@ def render_analisi_sinistri(conn):
         cond_bench = f"YEAR({data_eff_safe}) = {gen_target} AND COALESCE(CONTRAENTE, 'SCONOSCIUTO') != '{contr_target_safe}'"
 
     label_bench_sql = label_bench.replace("'", "''")
+
+    # --- NOMI FILE DINAMICI PER EXPORT ---
+    clean_target = f"{gen_target}_{str(contr_target).replace(' ', '_').replace('''\'''', '').replace('/', '_')}"
+    if confronto_attivo:
+        clean_bench = f"{gen_bench}_{str(contr_bench).replace(' ', '_').replace('''\'''', '').replace('/', '_')}"
+        nome_export = f"target_{clean_target}_vs_confronto_{clean_bench}"
+    else:
+        nome_export = f"target_{clean_target}"
 
     # --- ESECUZIONE QUERY SVILUPPO LOSS RATIO ---
     with st.spinner("Calcolo triangolazione e Loss Ratio in corso..."):
@@ -185,9 +193,8 @@ def render_analisi_sinistri(conn):
             df_full['Cum_Liquidato'] = df_full.groupby(['Gruppo', 'Ramo'])['Liquidato_t'].cumsum()
 
             # --- CALCOLO LOSS RATIO % ---
-            # Loss Ratio % = (Importo Liquidato Cumulato al tempo t / Premio Netto Totale Emesso) * 100
             df_full['Loss_Ratio'] = (df_full['Cum_Liquidato'] / df_full['Tot_Premio_Netto'].replace(0, np.nan)) * 100
-            df_full['Loss_Ratio'] = df_full['Loss_Ratio'].fillna(0) # Evita NaN per divisioni su premio a 0
+            df_full['Loss_Ratio'] = df_full['Loss_Ratio'].fillna(0) 
 
             # Creiamo la Serie Combinata e la Pivotata
             df_full['Serie'] = df_full['Gruppo'] + " - " + df_full['Ramo']
@@ -197,8 +204,8 @@ def render_analisi_sinistri(conn):
             st.markdown("#### 📈 Sviluppo Loss Ratio Cumulato (%)")
 
             color_map = {
-                'Target - DANNI': '#007A33',         # Verde HDI Scuro
-                'Target - VITA': '#C8102E',          # Rosso HDI Scuro
+                'Target - DANNI': '#007A33',         # Verde HDI
+                'Target - VITA': '#C8102E',          # Rosso HDI
                 f'{label_bench} - DANNI': '#80BCA1', # Verde Chiaro
                 f'{label_bench} - VITA': '#E38796'   # Rosso Chiaro
             }
@@ -206,7 +213,7 @@ def render_analisi_sinistri(conn):
             fig = go.Figure()
 
             for col in df_pivot.columns:
-                color = color_map.get(col, '#6B7280') # Grigio Fallback
+                color = color_map.get(col, '#6B7280') 
                 fig.add_trace(go.Scatter(
                     x=df_pivot.index,
                     y=df_pivot[col],
@@ -229,7 +236,7 @@ def render_analisi_sinistri(conn):
                 height=420
             )
 
-            # Il Download nativo in PNG è gestito dalle opzioni 'config' della libreria di rendering Plotly
+            # Passiamo il nome del file generato dinamicamente a Plotly
             st.plotly_chart(
                 fig, 
                 use_container_width=True,
@@ -237,7 +244,7 @@ def render_analisi_sinistri(conn):
                     'displayModeBar': True,
                     'toImageButtonOptions': {
                         'format': 'png',
-                        'filename': f'loss_ratio_{gen_target}_{contr_target}',
+                        'filename': f'grafico_{nome_export}',
                         'height': 600,
                         'width': 1000,
                         'scale': 2
@@ -250,22 +257,22 @@ def render_analisi_sinistri(conn):
             with col_titolo:
                 st.markdown("#### 🧮 Matrice Loss Ratio (%)")
             
-            # Righe = Serie, Colonne = Anno (t)
             df_matrix = df_pivot.T
             df_matrix.columns = [f"Anno {int(c)}" for c in df_matrix.columns]
 
             with col_dl:
                 csv_data = df_matrix.reset_index().to_csv(index=False, sep=';', decimal=',').encode('utf-8')
+                
+                # Passiamo il nome del file generato dinamicamente al tasto Download di Streamlit
                 st.download_button(
                     label="📥 Scarica CSV Tabella",
                     data=csv_data,
-                    file_name=f"matrice_loss_ratio_{gen_target}_{contr_target}.csv",
+                    file_name=f"tabella_{nome_export}.csv",
                     mime="text/csv",
                     type="primary",
                     use_container_width=True
                 )
 
-            # Formattazione per la visualizzazione all'interno della dashboard Streamlit
             col_config = {
                 col: st.column_config.NumberColumn(col, format="%.2f %%") 
                 for col in df_matrix.columns
