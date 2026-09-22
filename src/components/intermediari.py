@@ -49,14 +49,11 @@ def render_report_intermediari(conn):
         with st.spinner(
             "Elaborazione ottimizzata tramite DuckDB in corso..."
         ):
-          # Identifica la tabella nel database RAM
           tables = conn.execute("SHOW TABLES").fetchall()
           table_name = tables[0][0] if tables else "dati"
 
-          # Registra il DataFrame dei contatti direttamente in DuckDB per il join nativo
           conn.register("contatti_input", contatti_df)
 
-          # Query SQL ad alta efficienza di memoria (esegue pulizie, filtri e aggregazioni a livello C++)
           query_aggregata = f"""
                     WITH cleaned AS (
                         SELECT 
@@ -114,8 +111,29 @@ def render_report_intermediari(conn):
                     LEFT JOIN contatti_input c ON a.FINANZIARIA = c.Finanziaria_Clean
                 """
 
-          # Estrae in Pandas SOLO la tabella finale già aggregata (occupa pochissimi KB/MB)
           df_int = conn.execute(query_aggregata).df()
+
+          # --- CONTROLLO DIAGNOSTICO ---
+          match_count = df_int["Intermediario"].notna().sum()
+          total_rows = len(df_int)
+
+          if match_count == 0:
+            st.error(
+                "❌ **Nessuna corrispondenza trovata!** Il file Contatti.xlsx"
+                " non ha trovato alcun match con le finanziarie del database."
+            )
+            st.info(
+                "Ecco un'anteprima delle chiavi di finanziaria generate dal"
+                " database (controlla se differiscono da quelle in"
+                " Contatti.xlsx):"
+            )
+            st.write(df_int["FINANZIARIA"].unique())
+            return
+          else:
+            st.success(
+                f"Trovate {match_count} corrispondenze su {total_rows} righe"
+                " aggregate."
+            )
 
           # Calcoli metriche finanziarie finali
           df_int["Premi_netto_est"] = (
@@ -132,7 +150,9 @@ def render_report_intermediari(conn):
           )
           df_int["LR_netto"] = df_int["Sinistri"] / df_int["Premi"]
           df_int["LR"] = df_int["Sinistri"] / df_int["Premi_netto"]
-          df_int["LR_netto_atteso"] = df_int["Sinistri_attesi"] / df_int["Premi"]
+          df_int["LR_netto_atteso"] = (
+              df_int["Sinistri_attesi"] / df_int["Premi"]
+          )
           df_int["LR_atteso"] = (
               df_int["Sinistri_attesi"] / df_int["Premi_netto"]
           )
@@ -140,7 +160,6 @@ def render_report_intermediari(conn):
               df_int["Provvigioni"] / df_int["Premi_netto"]
           )
 
-          # Riordinamento colonne
           cols = list(df_int.columns)
           if "Anno" in cols and "FINANZIARIA" in cols:
             cols.remove("FINANZIARIA")
