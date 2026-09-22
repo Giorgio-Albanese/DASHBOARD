@@ -180,7 +180,8 @@ else:
         tab_navigatore, tab_premi, tab_sinistri = st.tabs([
             "🔍 Navigatore DB", 
             "💰 Analisi Premi", 
-            "🚨 Analisi Sinistri"
+            "🚨 Analisi Sinistri",
+            "📊 Report Intermediari" 
         ])
         
         with tab_navigatore:
@@ -195,6 +196,10 @@ else:
             from src.components.sinistri import render_analisi_sinistri
     
             render_analisi_sinistri(conn)
+
+        with tab_intermediari: # <-- AGGIUNTO QUI SOTTO
+            from src.components.intermediari import render_report_intermediari
+            render_report_intermediari(conn)
             
     else:
         st.error("⚠️ Connessione al database persa. Effettua nuovamente l'accesso.")
