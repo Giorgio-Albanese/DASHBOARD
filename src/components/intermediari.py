@@ -45,164 +45,102 @@ def render_report_intermediari(conn):
         type="primary",
         use_container_width=True,
     ):
-      # Blocco protetto per intercettare qualsiasi errore e mostrarlo a schermo
       try:
         with st.spinner(
-            "Estrazione dati da DuckDB ed elaborazione calcoli in corso..."
+            "Elaborazione ottimizzata tramite DuckDB in corso..."
         ):
-          # Estrazione dati da DuckDB
+          # Identifica la tabella nel database RAM
           tables = conn.execute("SHOW TABLES").fetchall()
           table_name = tables[0][0] if tables else "dati"
-          df_db = conn.execute(f"SELECT * FROM {table_name}").df()
 
-          # Controllo colonne obbligatorie per evitare KeyError silenziose
-          colonne_richieste = [
-              "DECORRENZA",
-              "CONTRAENTE",
-              "PREMI_NETTO",
-              "PROVVACQ",
-              "ESTINZIONI",
-              "ESTINZIONI_PROVV",
-              "LIQUIDAZIONI",
-              "ID",
-          ]
-          colonne_mancanti = [
-              col for col in colonne_richieste if col not in df_db.columns
-          ]
-          if colonne_mancanti:
-            st.error(
-                f"❌ Errore: Nel database mancano le colonne obbligatorie:"
-                f" {colonne_mancanti}"
-            )
-            return
+          # Registra il DataFrame dei contatti direttamente in DuckDB per il join nativo
+          conn.register("contatti_input", contatti_df)
 
-          df = df_db.copy()
+          # Query SQL ad alta efficienza di memoria (esegue pulizie, filtri e aggregazioni a livello C++)
+          query_aggregata = f"""
+                    WITH cleaned AS (
+                        SELECT 
+                            ID,
+                            PREMI_NETTO,
+                            PROVVACQ,
+                            COALESCE(ESTINZIONI, 0) AS ESTINZIONI,
+                            COALESCE(ESTINZIONI_PROVV, 0) AS ESTINZIONI_PROVV,
+                            COALESCE(LIQUIDAZIONI, 0) AS LIQUIDAZIONI,
+                            YEAR(TRY_CAST(DECORRENZA AS DATE)) AS Anno,
+                            COALESCE(RAMO, 'Generico') AS Tipo,
+                            CASE 
+                                WHEN UPPER(CONTRAENTE) LIKE '%I.B.L.%' THEN 'IBL ISTITUTO BANCARIO DEL LAVORO'
+                                WHEN UPPER(CONTRAENTE) LIKE '%CREDITIS%' THEN 'CREDITIS'
+                                ELSE TRIM(REGEXP_REPLACE(REGEXP_REPLACE(UPPER(CONTRAENTE), '[^\\w\\s]', ' ', 'g'), '\\b(SPA|SRL|S P A|S R L)\\b', '', 'g'))
+                            END AS FINANZIARIA,
+                            CASE 
+                                WHEN COALESCE(AZTIPO, -1) = 0 OR CAST(CODICEPROD AS VARCHAR) = 'CQP' THEN 'Pensionato'
+                                WHEN AZTIPO IN (1, 2) THEN 'Pubblico'
+                                WHEN AZTIPO = 3 THEN 'Parapubblico'
+                                WHEN AZTIPO IN (6, 7, 9, 10) THEN 'Medio Privato'
+                                WHEN AZTIPO IN (8, 11) THEN 'Grande Privato'
+                                WHEN AZTIPO IN (4, 5) OR (AZTIPO BETWEEN 12 AND 20) THEN 'Resto'
+                                WHEN AZTIPO IN (21, 22) THEN 'Del Pubblico'
+                                WHEN AZTIPO = 23 THEN 'Del Parapubblico'
+                                WHEN AZTIPO = 26 THEN 'Del Medio Privato'
+                                WHEN (AZTIPO BETWEEN 24 AND 25) OR (AZTIPO BETWEEN 40 AND 50) THEN 'Del Resto'
+                                ELSE 'Privato'
+                            END AS Tipo_Azienda
+                        FROM {table_name}
+                    ),
+                    filtered AS (
+                        SELECT * FROM cleaned WHERE Anno BETWEEN 2018 AND 2026
+                    ),
+                    aggregated AS (
+                        SELECT 
+                            Anno,
+                            FINANZIARIA,
+                            Tipo,
+                            Tipo_Azienda,
+                            SUM(PREMI_NETTO) AS Premi_netto,
+                            SUM(PROVVACQ) AS Provvigioni,
+                            SUM(ESTINZIONI) AS Estinzioni,
+                            SUM(ESTINZIONI_PROVV) AS Provvigioni_rec,
+                            SUM(LIQUIDAZIONI) AS Sinistri,
+                            COUNT(ID) AS N_Polizze,
+                            MODE(Tipo_Azienda) AS Tipo_Azienda_prevalenza
+                        FROM filtered
+                        GROUP BY Anno, FINANZIARIA, Tipo, Tipo_Azienda
+                    )
+                    SELECT 
+                        a.*,
+                        c.Intermediario
+                    FROM aggregated a
+                    LEFT JOIN contatti_input c ON a.FINANZIARIA = c.Finanziaria_Clean
+                """
 
-          df["DECORRENZA_DT"] = pd.to_datetime(
-              df["DECORRENZA"], format="mixed", errors="coerce"
+          # Estrae in Pandas SOLO la tabella finale già aggregata (occupa pochissimi KB/MB)
+          df_int = conn.execute(query_aggregata).df()
+
+          # Calcoli metriche finanziarie finali
+          df_int["Premi_netto_est"] = (
+              df_int["Premi_netto"]
+              - df_int["Provvigioni"]
+              + df_int["Estinzioni"]
+              + df_int["Provvigioni_rec"]
           )
-          df["Anno"] = df["DECORRENZA_DT"].dt.year
-          df = df[df["Anno"].isin(range(2018, 2027))].copy()
-
-          contraente_upper = (
-              df["CONTRAENTE"]
-              .astype(str)
-              .str.upper()
-              .str.replace(r"\s+", " ", regex=True)
-              .str.strip()
-          )
-
-          finanziaria_pulita = np.select(
-              [
-                  contraente_upper.str.contains(r"I\.B\.L\.", regex=True),
-                  contraente_upper.str.contains("CREDITIS", regex=True),
-              ],
-              ["IBL ISTITUTO BANCARIO DEL LAVORO", "CREDITIS"],
-              default=contraente_upper,
-          )
-
-          df["FINANZIARIA_TEMP"] = finanziaria_pulita
-          cleaned = df["FINANZIARIA_TEMP"].str.replace(
-              r"[^\w\s]", " ", regex=True
-          )
-          cleaned = cleaned.str.replace(
-              r"\b(SPA|SRL|S P A|S R L)\b", "", regex=True
-          )
-          df["FINANZIARIA"] = (
-              cleaned.str.replace(r"\s+", " ", regex=True).str.strip()
-          )
-
-          def map_tipo_azienda(row):
-            az = row.get("AZTIPO", None)
-            prod = str(row.get("CODICEPROD", ""))
-            if az == 0 or prod == "CQP":
-              return "Pensionato"
-            elif az in [1, 2]:
-              return "Pubblico"
-            elif az == 3:
-              return "Parapubblico"
-            elif az in [6, 7, 9, 10]:
-              return "Medio Privato"
-            elif az in [8, 11]:
-              return "Grande Privato"
-            elif az in [4, 5] or (az is not None and 12 <= az <= 20):
-              return "Resto"
-            elif az in [21, 22]:
-              return "Del Pubblico"
-            elif az == 23:
-              return "Del Parapubblico"
-            elif az == 26:
-              return "Del Medio Privato"
-            elif (az is not None and 24 <= az <= 25) or (
-                az is not None and 40 <= az <= 50
-            ):
-              return "Del Resto"
-            else:
-              return "Privato"
-
-          df["Tipo_Azienda"] = df.apply(map_tipo_azienda, axis=1)
-
-          if "RAMO" in df.columns and "Tipo" not in df.columns:
-            df["Tipo"] = df["RAMO"]
-          elif "Tipo" not in df.columns:
-            df["Tipo"] = "Generico"
-
-          group_keys = ["Anno", "FINANZIARIA", "Tipo", "Tipo_Azienda"]
-          df_grouped = (
-              df.groupby(group_keys)
-              .agg(
-                  Premi_netto=("PREMI_NETTO", "sum"),
-                  Provvigioni=("PROVVACQ", "sum"),
-                  Estinzioni=("ESTINZIONI", lambda x: x.fillna(0).sum()),
-                  Provvigioni_rec=("ESTINZIONI_PROVV", "sum"),
-                  Sinistri=("LIQUIDAZIONI", "sum"),
-                  N_Polizze=("ID", "count"),
-                  Tipo_Azienda_prevalenza=(
-                      "Tipo_Azienda",
-                      lambda x: x.mode()[0] if not x.mode().empty else "Privato",
-                  ),
-              )
-              .reset_index()
-          )
-
-          df_grouped["Premi_netto_est"] = (
-              df_grouped["Premi_netto"]
-              - df_grouped["Provvigioni"]
-              + df_grouped["Estinzioni"]
-              + df_grouped["Provvigioni_rec"]
-          )
-          df_grouped["Premi"] = np.maximum(1, df_grouped["Premi_netto_est"])
-
-          df_grouped["Sinistri_attesi"] = (
+          df_int["Premi"] = np.maximum(1, df_int["Premi_netto_est"])
+          df_int["Sinistri_attesi"] = (
               10
-              / np.maximum(1, np.minimum(10, 2026 - df_grouped["Anno"]))
-              * df_grouped["Sinistri"]
+              / np.maximum(1, np.minimum(10, 2026 - df_int["Anno"]))
+              * df_int["Sinistri"]
           )
-          df_grouped["LR_netto"] = df_grouped["Sinistri"] / df_grouped["Premi"]
-          df_grouped["LR"] = df_grouped["Sinistri"] / df_grouped["Premi_netto"]
-          df_grouped["LR_netto_atteso"] = (
-              df_grouped["Sinistri_attesi"] / df_grouped["Premi"]
+          df_int["LR_netto"] = df_int["Sinistri"] / df_int["Premi"]
+          df_int["LR"] = df_int["Sinistri"] / df_int["Premi_netto"]
+          df_int["LR_netto_atteso"] = df_int["Sinistri_attesi"] / df_int["Premi"]
+          df_int["LR_atteso"] = (
+              df_int["Sinistri_attesi"] / df_int["Premi_netto"]
           )
-          df_grouped["LR_atteso"] = (
-              df_grouped["Sinistri_attesi"] / df_grouped["Premi_netto"]
-          )
-          df_grouped["Provv_perc"] = (
-              df_grouped["Provvigioni"] / df_grouped["Premi_netto"]
+          df_int["Provv_perc"] = (
+              df_int["Provvigioni"] / df_int["Premi_netto"]
           )
 
-          df_int = pd.merge(
-              df_grouped,
-              contatti_df[["Finanziaria_Clean", "Intermediario"]],
-              left_on="FINANZIARIA",
-              right_on="Finanziaria_Clean",
-              how="left",
-          )
-          df_int["FINANZIARIA"] = df_int["Finanziaria"].fillna(
-              df_int["FINANZIARIA"]
-          )
-          df_int = df_int.drop(
-              columns=["Finanziaria_Clean", "Finanziaria"], errors="ignore"
-          )
+          # Riordinamento colonne
           cols = list(df_int.columns)
           if "Anno" in cols and "FINANZIARIA" in cols:
             cols.remove("FINANZIARIA")
@@ -263,9 +201,9 @@ def render_report_intermediari(conn):
           st.success("Tutti i report per intermediario sono stati generati!")
 
       except Exception as e:
-        # Se c'è un errore, lo mostra chiaramente a schermo invece di crashare in silenzio
         st.error(
-            "❌ Si è verificato un errore imprevisto durante l'elaborazione:"
+            "❌ Si è verificato un errore durante l'esecuzione della query"
+            " SQL:"
         )
         st.exception(e)
         traceback.print_exc()
