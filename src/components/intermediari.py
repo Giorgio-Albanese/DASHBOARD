@@ -46,15 +46,40 @@ def render_report_intermediari(conn):
         width="stretch",
     ):
       try:
-        with st.spinner(
-            "Elaborazione ottimizzata tramite DuckDB in corso..."
-        ):
+        with st.spinner("Verifica struttura dati e elaborazione in corso..."):
           tables = conn.execute("SHOW TABLES").fetchall()
           table_name = tables[0][0] if tables else "dati"
 
+          # 1. Ispezioniamo le colonne presenti nel database DuckDB
+          df_preview = conn.execute(f"SELECT * FROM {table_name} LIMIT 0").df()
+          colonne_db = [c.upper() for c in df_preview.columns]
+
+          # 2. Controllo colonne minime indispensabili
+          colonne_richieste = [
+              "DECORRENZA",
+              "CONTRAENTE",
+              "PREMI_NETTO",
+              "PROVVACQ",
+              "LIQUIDAZIONI",
+          ]
+          colonne_mancanti = [
+              c for c in colonne_richieste if c not in colonne_db
+          ]
+
+          if colonne_mancanti:
+            st.error(
+                "❌ **Disallineamento colonne nel Database DuckDB!** Mancano i"
+                f" campi: `{colonne_mancanti}`"
+            )
+            st.info(
+                "Ecco l'elenco di **tutte le colonne effettivamente"
+                " presenti** nella tabella del database in RAM:"
+            )
+            st.code(list(df_preview.columns))
+            return
+
           conn.register("contatti_input", contatti_df)
 
-          # Query corretta: usa COUNT(*) per evitare problemi con la colonna ID
           query_aggregata = f"""
                     WITH cleaned AS (
                         SELECT 
@@ -113,7 +138,6 @@ def render_report_intermediari(conn):
 
           df_int = conn.execute(query_aggregata).df()
 
-          # --- CONTROLLO DIAGNOSTICO ---
           match_count = df_int["Intermediario"].notna().sum()
           total_rows = len(df_int)
 
@@ -124,8 +148,7 @@ def render_report_intermediari(conn):
             )
             st.info(
                 "Ecco un'anteprima delle chiavi di finanziaria generate dal"
-                " database (controlla se differiscono da quelle in"
-                " Contatti.xlsx):"
+                " database:"
             )
             st.write(df_int["FINANZIARIA"].unique())
             return
@@ -135,7 +158,6 @@ def render_report_intermediari(conn):
                 " aggregate."
             )
 
-          # Calcoli metriche finanziarie finali
           df_int["Premi_netto_est"] = (
               df_int["Premi_netto"]
               - df_int["Provvigioni"]
@@ -167,7 +189,6 @@ def render_report_intermediari(conn):
             cols.insert(anno_idx + 1, "FINANZIARIA")
             df_int = df_int[cols]
 
-          # Creazione archivio ZIP in memoria
           zip_buffer = io.BytesIO()
           with zipfile.ZipFile(
               zip_buffer, "w", zipfile.ZIP_DEFLATED
