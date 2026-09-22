@@ -8,7 +8,7 @@ import pandas as pd
 import streamlit as st
 
 
-def render_report_intermediari(df_db):
+def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
   st.subheader("📊 Generatore Report per Intermediario")
   st.markdown(
       "Carica il file dei contatti (`Contatti.xlsx`) per elaborare e scaricare"
@@ -44,11 +44,20 @@ def render_report_intermediari(df_db):
         use_container_width=True,
     ):
       with st.spinner(
-          "Elaborazione calcoli e creazione file Excel in corso..."
+          "Estrazione dati da DuckDB ed elaborazione calcoli in corso..."
       ):
+        try:
+          # Estrae i dati direttamente dalla connessione DuckDB in RAM
+          tables = conn.execute("SHOW TABLES").fetchall()
+          table_name = tables[0][0] if tables else "dati"
+          df_db = conn.execute(f"SELECT * FROM {table_name}").df()
+        except Exception as e:
+          st.error(f"Errore durante la lettura dal database in RAM: {e}")
+          return
+
         # 2. Copia e filtraggio dati
         df = df_db.copy()
-
+        
         # Gestione decorrenza e anni (2018-2026)
         df["DECORRENZA_DT"] = pd.to_datetime(
             df["DECORRENZA"], format="mixed", errors="coerce"
