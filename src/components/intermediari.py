@@ -170,7 +170,7 @@ def render_report_intermediari(conn):
             return
 
           match_count = df_int["Intermediario"].notna().sum()
-          total_rows = len(df_int)
+        #   total_rows = len(df_int)
 
           if match_count == 0:
             st.error(
@@ -181,11 +181,11 @@ def render_report_intermediari(conn):
             st.info("Ecco le chiavi di finanziaria estratte dal database:")
             st.write(df_int["FINANZIARIA"].unique())
             return
-          else:
-            st.success(
-                f"Trovate {match_count} corrispondenze su {total_rows} righe"
-                " aggregate."
-            )
+        #   else:
+        #     st.success(
+        #         f"Trovate {match_count} corrispondenze su {total_rows} righe"
+        #         " aggregate."
+        #     )
 
           df_int["Premi_netto_est"] = (
               df_int["Premi_netto"]
