@@ -177,7 +177,7 @@ else:
     conn = ottieni_connessione()
     
     if conn is not None:
-        tab_navigatore, tab_premi, tab_sinistri = st.tabs([
+        tab_navigatore, tab_premi, tab_sinistri, tab_intermediari = st.tabs([
             "🔍 Navigatore DB", 
             "💰 Analisi Premi", 
             "🚨 Analisi Sinistri",
@@ -197,7 +197,7 @@ else:
     
             render_analisi_sinistri(conn)
 
-        with tab_intermediari: # <-- AGGIUNTO QUI SOTTO
+        with tab_intermediari: 
             from src.components.intermediari import render_report_intermediari
             render_report_intermediari(conn)
             
