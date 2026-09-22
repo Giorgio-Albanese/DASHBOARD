@@ -8,12 +8,16 @@ import pandas as pd
 import streamlit as st
 
 
-def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
+def render_report_intermediari(conn):
   st.subheader("📊 Generatore Report per Intermediario")
   st.markdown(
       "Carica il file dei contatti (`Contatti.xlsx`) per elaborare e scaricare"
       " i report Excel suddivisi per intermediario e finanziaria."
   )
+
+  # Inizializza lo stato in memoria per evitare crash o perdite del file zip
+  if "zip_buffer_intermediari" not in st.session_state:
+    st.session_state["zip_buffer_intermediari"] = None
 
   # 1. Upload del file Contatti direttamente dall'interfaccia
   contatti_file = st.file_uploader(
@@ -23,7 +27,6 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
   if contatti_file is not None:
     try:
       contatti_df = pd.read_excel(contatti_file)
-      # Pulizia contatti
       contatti_df = contatti_df.dropna(
           subset=["Finanziaria", "Intermediario"]
       ).copy()
@@ -39,7 +42,7 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
       return
 
     if st.button(
-        "🚀 Genera e Scarica Report Intermediari",
+        "🚀 Genera Report Intermediari",
         type="primary",
         use_container_width=True,
     ):
@@ -47,7 +50,7 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
           "Estrazione dati da DuckDB ed elaborazione calcoli in corso..."
       ):
         try:
-          # Estrae i dati direttamente dalla connessione DuckDB in RAM
+          # Estrazione dati da DuckDB
           tables = conn.execute("SHOW TABLES").fetchall()
           table_name = tables[0][0] if tables else "dati"
           df_db = conn.execute(f"SELECT * FROM {table_name}").df()
@@ -55,17 +58,15 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
           st.error(f"Errore durante la lettura dal database in RAM: {e}")
           return
 
-        # 2. Copia e filtraggio dati
+        # Copia e filtraggio dati
         df = df_db.copy()
-        
-        # Gestione decorrenza e anni (2018-2026)
+
         df["DECORRENZA_DT"] = pd.to_datetime(
             df["DECORRENZA"], format="mixed", errors="coerce"
         )
         df["Anno"] = df["DECORRENZA_DT"].dt.year
         df = df[df["Anno"].isin(range(2018, 2027))].copy()
 
-        # 3. Pulizia Contraente e blindatura nomi speciali (IBL e CREDITIS)
         contraente_upper = (
             df["CONTRAENTE"]
             .astype(str)
@@ -94,7 +95,6 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
             cleaned.str.replace(r"\s+", " ", regex=True).str.strip()
         )
 
-        # 4. Tipologia Azienda (Mappatura AZTIPO / CODICEPROD)
         def map_tipo_azienda(row):
           az = row.get("AZTIPO", None)
           prod = str(row.get("CODICEPROD", ""))
@@ -125,20 +125,9 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
 
         df["Tipo_Azienda"] = df.apply(map_tipo_azienda, axis=1)
 
-        # Uniformiamo il campo Ramo/Tipo
         if "RAMO" in df.columns and "Tipo" not in df.columns:
           df["Tipo"] = df["RAMO"]
 
-        # 5. Aggregazione (GroupBy equivalente a R)
-        agg_cols = {
-            "PREMI_NETTO": lambda x: x.sum(min_count=1),
-            "PROVVACQ": lambda x: x.sum(min_count=1),
-            "ESTINZIONI": lambda x: x.sum(min_count=1),
-            "ESTINZIONI_PROVV": lambda x: x.sum(min_count=1),
-            "LIQUIDAZIONI": lambda x: x.sum(min_count=1),
-        }
-
-        # Raggruppamento
         group_keys = ["Anno", "FINANZIARIA", "Tipo", "Tipo_Azienda"]
         df_grouped = (
             df.groupby(group_keys)
@@ -157,7 +146,6 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
             .reset_index()
         )
 
-        # Calcoli metriche finanziarie
         df_grouped["Premi_netto_est"] = (
             df_grouped["Premi_netto"]
             - df_grouped["Provvigioni"]
@@ -183,7 +171,6 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
             df_grouped["Provvigioni"] / df_grouped["Premi_netto"]
         )
 
-        # 6. Join con Contatti
         df_int = pd.merge(
             df_grouped,
             contatti_df[["Finanziaria_Clean", "Intermediario"]],
@@ -197,8 +184,6 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
         df_int = df_int.drop(
             columns=["Finanziaria_Clean", "Finanziaria"], errors="ignore"
         )
-        df_int = df_int.rename(columns={"FINANZIARIA": "FINANZIARIA"})
-        # Spostiamo FINANZIARIA dopo Anno se presente
         cols = list(df_int.columns)
         if "Anno" in cols and "FINANZIARIA" in cols:
           cols.remove("FINANZIARIA")
@@ -206,7 +191,7 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
           cols.insert(anno_idx + 1, "FINANZIARIA")
           df_int = df_int[cols]
 
-        # 7. Creazione archivio ZIP in memoria con i file Excel per Intermediario
+        # Creazione archivio ZIP in memoria
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(
             zip_buffer, "w", zipfile.ZIP_DEFLATED
@@ -219,7 +204,6 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
           intermediari = df_filtrato["Intermediario"].unique()
 
           for int_nome in intermediari:
-            int_pulito = re.sub(r'[\\/:*?"<>|]^_', "_", str(int_nome))
             int_pulito = re.sub(r'[\\/:*?"<>|]', "_", str(int_nome))
             df_sub_int = df_filtrato[df_filtrato["Intermediario"] == int_nome]
 
@@ -232,23 +216,19 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
             if not fogli_lista:
               continue
 
-            # Creazione Workbook Excel in memoria
             excel_buffer = io.BytesIO()
             wb = openpyxl.Workbook()
-            # Rimuovi il foglio di default
             wb.remove(wb.active)
 
             for fin_nome, df_fin in fogli_lista.items():
               nome_sheet = re.sub(r'[\\/:*?"<>|]', "_", str(fin_nome))[:31]
               ws = wb.create_sheet(title=nome_sheet)
 
-              # Scrivi intestazioni e dati
               headers = list(df_fin.columns)
               ws.append(headers)
               for row in df_fin.itertuples(index=False):
                 ws.append(list(row))
 
-              # Formattazione: Filtri automatici e larghezza colonne
               ws.auto_filter.ref = ws.dimensions
               for col in ws.columns:
                 max_len = max(len(str(cell.value or "")) for cell in col)
@@ -260,11 +240,17 @@ def render_report_intermediari(conn):  # <-- Riceve conn, non df_db
             zip_file.writestr(f"{int_pulito}.xlsx", excel_buffer.read())
 
         zip_buffer.seek(0)
+        # Salviamo il buffer nello state della sessione
+        st.session_state["zip_buffer_intermediari"] = zip_buffer
         st.success("Tutti i report per intermediario sono stati generati!")
-        st.download_button(
-            label="📦 Scarica Archivio ZIP (Report Intermediari)",
-            data=zip_buffer,
-            file_name="Report_Intermediari_Excel.zip",
-            mime="application/zip",
-            use_container_width=True,
-        )
+
+  # 2. Pulsante di download sempre stabile fuori dal blocco di generazione
+  if st.session_state["zip_buffer_intermediari"] is not None:
+    st.markdown("---")
+    st.download_button(
+        label="📦 Scarica Archivio ZIP (Report Intermediari)",
+        data=st.session_state["zip_buffer_intermediari"],
+        file_name="Report_Intermediari_Excel.zip",
+        mime="application/zip",
+        use_container_width=True,
+    )
