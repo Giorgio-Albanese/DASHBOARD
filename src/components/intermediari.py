@@ -46,15 +46,41 @@ def render_report_intermediari(conn):
         width="stretch",
     ):
       try:
-        with st.spinner("Verifica struttura dati e elaborazione in corso..."):
+        with st.spinner(
+            "Ricerca tabella polizze e elaborazione in corso..."
+        ):
           tables = conn.execute("SHOW TABLES").fetchall()
-          table_name = tables[0][0] if tables else "dati"
+          if not tables:
+            st.error(
+                "❌ Nessuna tabella trovata nel database DuckDB in memoria."
+            )
+            return
 
-          # 1. Ispezioniamo le colonne presenti nel database DuckDB
+          # Trova automaticamente la tabella corretta cercando quelle con le colonne delle polizze
+          table_name = None
+          for t in tables:
+            t_name = t[0]
+            try:
+              cols_preview = [
+                  c.upper()
+                  for c in conn.execute(f"SELECT * FROM {t_name} LIMIT 0")
+                  .df()
+                  .columns
+              ]
+              if "DECORRENZA" in cols_preview or "PREMI_NETTO" in cols_preview:
+                table_name = t_name
+                break
+            except Exception:
+              continue
+
+          # Se non trova match esatti, prende la prima tabella disponibile come fallback
+          if not table_name:
+            table_name = tables[0][0]
+
+          # Verifica finale delle colonne nella tabella individuata
           df_preview = conn.execute(f"SELECT * FROM {table_name} LIMIT 0").df()
           colonne_db = [c.upper() for c in df_preview.columns]
 
-          # 2. Controllo colonne minime indispensabili
           colonne_richieste = [
               "DECORRENZA",
               "CONTRAENTE",
@@ -68,12 +94,14 @@ def render_report_intermediari(conn):
 
           if colonne_mancanti:
             st.error(
-                "❌ **Disallineamento colonne nel Database DuckDB!** Mancano i"
-                f" campi: `{colonne_mancanti}`"
+                "❌ **Tabella polizze non identificata correttamente.** La"
+                f" tabella selezionata (`{table_name}`) non contiene i campi:"
+                f" `{colonne_mancanti}`"
             )
+            st.info("Tabelle disponibili nel database:")
+            st.write([t[0] for t in tables])
             st.info(
-                "Ecco l'elenco di **tutte le colonne effettivamente"
-                " presenti** nella tabella del database in RAM:"
+                f"Colonne trovate nella tabella `{table_name}`:"
             )
             st.code(list(df_preview.columns))
             return
