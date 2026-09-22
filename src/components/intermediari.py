@@ -43,7 +43,7 @@ def render_report_intermediari(conn):
     if st.button(
         "🚀 Genera Report Intermediari",
         type="primary",
-        use_container_width=True,
+        width="stretch",
     ):
       try:
         with st.spinner(
@@ -54,10 +54,10 @@ def render_report_intermediari(conn):
 
           conn.register("contatti_input", contatti_df)
 
+          # Query corretta: usa COUNT(*) per evitare problemi con la colonna ID
           query_aggregata = f"""
                     WITH cleaned AS (
                         SELECT 
-                            ID,
                             PREMI_NETTO,
                             PROVVACQ,
                             COALESCE(ESTINZIONI, 0) AS ESTINZIONI,
@@ -99,7 +99,7 @@ def render_report_intermediari(conn):
                             SUM(ESTINZIONI) AS Estinzioni,
                             SUM(ESTINZIONI_PROVV) AS Provvigioni_rec,
                             SUM(LIQUIDAZIONI) AS Sinistri,
-                            COUNT(ID) AS N_Polizze,
+                            COUNT(*) AS N_Polizze,
                             MODE(Tipo_Azienda) AS Tipo_Azienda_prevalenza
                         FROM filtered
                         GROUP BY Anno, FINANZIARIA, Tipo, Tipo_Azienda
@@ -234,5 +234,5 @@ def render_report_intermediari(conn):
         data=st.session_state["zip_buffer_intermediari"],
         file_name="Report_Intermediari_Excel.zip",
         mime="application/zip",
-        use_container_width=True,
+        width="stretch",
     )
