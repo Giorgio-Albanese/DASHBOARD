@@ -47,63 +47,48 @@ def render_report_intermediari(conn):
     ):
       try:
         with st.spinner(
-            "Ricerca tabella polizze e elaborazione in corso..."
+            "Verifica tabelle nel database e elaborazione in corso..."
         ):
           tables = conn.execute("SHOW TABLES").fetchall()
           if not tables:
             st.error(
-                "❌ Nessuna tabella trovata nel database DuckDB in memoria."
+                "❌ **Il database DuckDB è vuoto!** Nessuna tabella trovata in"
+                " memoria. Assicurati di aver caricato il file principale delle"
+                " polizze nella dashboard prima di accedere a questa sezione."
             )
             return
 
-          # Trova automaticamente la tabella corretta cercando quelle con le colonne delle polizze
+          # Cerca la tabella che contiene i dati delle polizze
           table_name = None
+          tabelle_info = {}
+
           for t in tables:
             t_name = t[0]
             try:
-              cols_preview = [
+              cols = [
                   c.upper()
                   for c in conn.execute(f"SELECT * FROM {t_name} LIMIT 0")
                   .df()
                   .columns
               ]
-              if "DECORRENZA" in cols_preview or "PREMI_NETTO" in cols_preview:
+              tabelle_info[t_name] = cols
+              if "DECORRENZA" in cols or "PREMI_NETTO" in cols:
                 table_name = t_name
                 break
             except Exception:
               continue
 
-          # Se non trova match esatti, prende la prima tabella disponibile come fallback
           if not table_name:
-            table_name = tables[0][0]
-
-          # Verifica finale delle colonne nella tabella individuata
-          df_preview = conn.execute(f"SELECT * FROM {table_name} LIMIT 0").df()
-          colonne_db = [c.upper() for c in df_preview.columns]
-
-          colonne_richieste = [
-              "DECORRENZA",
-              "CONTRAENTE",
-              "PREMI_NETTO",
-              "PROVVACQ",
-              "LIQUIDAZIONI",
-          ]
-          colonne_mancanti = [
-              c for c in colonne_richieste if c not in colonne_db
-          ]
-
-          if colonne_mancanti:
             st.error(
-                "❌ **Tabella polizze non identificata correttamente.** La"
-                f" tabella selezionata (`{table_name}`) non contiene i campi:"
-                f" `{colonne_mancanti}`"
+                "❌ **Tabella delle polizze non trovata in DuckDB.** Il"
+                " database in memoria contiene solo tabelle di supporto (come"
+                " i contatti) ma manca il dataset principale delle polizze."
             )
-            st.info("Tabelle disponibili nel database:")
-            st.write([t[0] for t in tables])
             st.info(
-                f"Colonne trovate nella tabella `{table_name}`:"
+                "Tabelle attualmente presenti in DuckDB e relative colonne:"
             )
-            st.code(list(df_preview.columns))
+            for t_n, c_list in tabelle_info.items():
+              st.write(f"**Tabella `{t_n}`**: `{c_list}`")
             return
 
           conn.register("contatti_input", contatti_df)
