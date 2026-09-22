@@ -47,18 +47,16 @@ def render_report_intermediari(conn):
     ):
       try:
         with st.spinner(
-            "Verifica tabelle nel database e elaborazione in corso..."
+            "Analisi date, tabelle e aggregazione in corso..."
         ):
           tables = conn.execute("SHOW TABLES").fetchall()
           if not tables:
             st.error(
                 "❌ **Il database DuckDB è vuoto!** Nessuna tabella trovata in"
-                " memoria. Assicurati di aver caricato il file principale delle"
-                " polizze nella dashboard prima di accedere a questa sezione."
+                " memoria."
             )
             return
 
-          # Cerca la tabella che contiene i dati delle polizze
           table_name = None
           tabelle_info = {}
 
@@ -79,20 +77,17 @@ def render_report_intermediari(conn):
               continue
 
           if not table_name:
-            st.error(
-                "❌ **Tabella delle polizze non trovata in DuckDB.** Il"
-                " database in memoria contiene solo tabelle di supporto (come"
-                " i contatti) ma manca il dataset principale delle polizze."
-            )
-            st.info(
-                "Tabelle attualmente presenti in DuckDB e relative colonne:"
-            )
-            for t_n, c_list in tabelle_info.items():
-              st.write(f"**Tabella `{t_n}`**: `{c_list}`")
-            return
+            table_name = tables[0][0]
+
+          # --- DIAGNOSTICA PRELIMINARE DATE ---
+          # Seleziona un campione di DECORRENZA per verificare il formato
+          sample_dates = conn.execute(
+              f"SELECT DECORRENZA FROM {table_name} LIMIT 5"
+          ).fetchall()
 
           conn.register("contatti_input", contatti_df)
 
+          # Query con estrazione dell'anno super-robusta (gestisce DD/MM/YYYY, YYYY-MM-DD e Timestamp)
           query_aggregata = f"""
                     WITH cleaned AS (
                         SELECT 
@@ -101,7 +96,12 @@ def render_report_intermediari(conn):
                             COALESCE(ESTINZIONI, 0) AS ESTINZIONI,
                             COALESCE(ESTINZIONI_PROVV, 0) AS ESTINZIONI_PROVV,
                             COALESCE(LIQUIDAZIONI, 0) AS LIQUIDAZIONI,
-                            YEAR(TRY_CAST(DECORRENZA AS DATE)) AS Anno,
+                            COALESCE(
+                                TRY_CAST(YEAR(TRY_CAST(DECORRENZA AS DATE)) AS INTEGER),
+                                TRY_CAST(YEAR(TRY_CAST(STRPTIME(CAST(DECORRENZA AS VARCHAR), '%d/%m/%Y') AS DATE)) AS INTEGER),
+                                TRY_CAST(SUBSTR(CAST(DECORRENZA AS VARCHAR), 1, 4) AS INTEGER),
+                                TRY_CAST(SUBSTR(CAST(DECORRENZA AS VARCHAR), 7, 4) AS INTEGER)
+                            ) AS Anno,
                             COALESCE(RAMO, 'Generico') AS Tipo,
                             CASE 
                                 WHEN UPPER(CONTRAENTE) LIKE '%I.B.L.%' THEN 'IBL ISTITUTO BANCARIO DEL LAVORO'
@@ -124,7 +124,7 @@ def render_report_intermediari(conn):
                         FROM {table_name}
                     ),
                     filtered AS (
-                        SELECT * FROM cleaned WHERE Anno BETWEEN 2018 AND 2026
+                        SELECT * FROM cleaned WHERE Anno IS NOT NULL AND Anno BETWEEN 2018 AND 2026
                     ),
                     aggregated AS (
                         SELECT 
@@ -151,18 +151,34 @@ def render_report_intermediari(conn):
 
           df_int = conn.execute(query_aggregata).df()
 
+          # Se il DataFrame risultante è vuoto, mostriamo un errore con i dettagli diagnostici
+          if df_int.empty:
+            st.error(
+                "❌ **La query ha restituito 0 righe!** Nessun dato è"
+                " sopravvissuto ai filtri (probabilmente a causa del formato"
+                " della colonna `DECORRENZA` o dell'intervallo anni)."
+            )
+            st.info("Campione dei valori grezzi trovati in `DECORRENZA`:")
+            st.write(sample_dates)
+
+            # Mostriamo anche gli anni unici rilevati prima del filtro per capire cosa c'è dentro
+            anni_grezzi = conn.execute(
+                f"SELECT DISTINCT DECORRENZA FROM {table_name} LIMIT 20"
+            ).df()
+            st.info("Primi valori distinti della colonna DECORRENZA:")
+            st.write(anni_grezzi)
+            return
+
           match_count = df_int["Intermediario"].notna().sum()
           total_rows = len(df_int)
 
           if match_count == 0:
             st.error(
-                "❌ **Nessuna corrispondenza trovata!** Il file Contatti.xlsx"
-                " non ha trovato alcun match con le finanziarie del database."
+                "❌ **Nessuna corrispondenza trovata con i contatti!** Le"
+                " finanziarie nel database non coincidono con quelle nel file"
+                " Contatti.xlsx."
             )
-            st.info(
-                "Ecco un'anteprima delle chiavi di finanziaria generate dal"
-                " database:"
-            )
+            st.info("Ecco le chiavi di finanziaria estratte dal database:")
             st.write(df_int["FINANZIARIA"].unique())
             return
           else:
